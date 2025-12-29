@@ -8,11 +8,11 @@ if (!baseURL) {
 }
 
 const timeoutRaw = import.meta.env.VITE_API_TIMEOUT as string | undefined;
-const timeout = timeoutRaw ? Number(timeoutRaw) : 15000;
+const timeout = timeoutRaw ? Number(timeoutRaw) : 60000;
 
 export const axiosClient = axios.create({
   baseURL: baseURL || "/api",
-  timeout: Number.isFinite(timeout) ? timeout : 15000,
+  timeout: Number.isFinite(timeout) ? timeout : 60000,
   headers: {
     "Content-Type": "application/json",
   },
