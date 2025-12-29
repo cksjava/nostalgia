@@ -82,6 +82,11 @@ export default function NowPlayingScreen() {
   const seekDebounceRef = useRef<number | null>(null);
   const volDebounceRef = useRef<number | null>(null);
 
+  // Playback ticking refs (to move seekbar immediately)
+  const tickTimerRef = useRef<number | null>(null);
+  const lastTickMsRef = useRef<number>(0);
+  const endedGuardRef = useRef<boolean>(false);
+
   const bgStyle: React.CSSProperties = {
     backgroundImage: `
       radial-gradient(900px 600px at 18% 20%, rgba(255, 110, 90, 0.45), transparent 60%),
@@ -228,6 +233,11 @@ export default function NowPlayingScreen() {
       try {
         await tracksService.play(trackId, { positionSec: 0 });
         if (cancelled) return;
+
+        // reset local playback state so seekbar moves immediately
+        endedGuardRef.current = false;
+        lastTickMsRef.current = performance.now();
+
         setIsPlaying(true);
         setPositionSec(0);
       } catch (e: any) {
@@ -245,26 +255,227 @@ export default function NowPlayingScreen() {
     };
   }, [trackId]);
 
-  // ✅ Debounced seek -> backend
-  const onSeek = useCallback(
-    (next: number) => {
-      setPositionSec(next);
+  const navigateToTrackInSameContext = useCallback(
+    (nextTrackId: string) => {
+      if (routeKind === "album") {
+        if (!albumId) {
+          setToast({ kind: "err", message: "albumId missing in URL." });
+          return;
+        }
+        navigate(`/albums/${albumId}/tracks/${nextTrackId}`);
+        return;
+      }
+      if (routeKind === "playlist") {
+        if (!playlistId) {
+          setToast({ kind: "err", message: "playlistId missing in URL." });
+          return;
+        }
+        navigate(`/playlists/${playlistId}/tracks/${nextTrackId}`);
+        return;
+      }
+      if (routeKind === "favourites") {
+        navigate(`/favourites/tracks/${nextTrackId}`);
+        return;
+      }
 
+      setToast({ kind: "err", message: "Unknown route context for next/previous navigation." });
+    },
+    [navigate, routeKind, albumId, playlistId]
+  );
+
+  const goPrev = useCallback(() => {
+    if (!trackId) return;
+
+    if (!contextTracks.length) {
+      setToast({
+        kind: "warn",
+        message: contextLoading ? "Loading track list…" : "No track list available for previous/next.",
+      });
+      return;
+    }
+
+    const idx = contextTracks.findIndex((t: any) => String((t as any).id) === String(trackId));
+    if (idx < 0) {
+      setToast({ kind: "warn", message: "Current track not found in list." });
+      return;
+    }
+
+    let targetIdx = idx - 1;
+
+    if (targetIdx < 0) {
+      if (repeatMode === "all") targetIdx = contextTracks.length - 1;
+      else {
+        setToast({ kind: "warn", message: "This is the first track." });
+        return;
+      }
+    }
+
+    const nextId = String((contextTracks[targetIdx] as any).id);
+    if (!nextId) return;
+    navigateToTrackInSameContext(nextId);
+  }, [trackId, contextTracks, contextLoading, repeatMode, navigateToTrackInSameContext]);
+
+  const goNext = useCallback(() => {
+    if (!trackId) return;
+
+    if (!contextTracks.length) {
+      setToast({
+        kind: "warn",
+        message: contextLoading ? "Loading track list…" : "No track list available for previous/next.",
+      });
+      return;
+    }
+
+    const idx = contextTracks.findIndex((t: any) => String((t as any).id) === String(trackId));
+    if (idx < 0) {
+      setToast({ kind: "warn", message: "Current track not found in list." });
+      return;
+    }
+
+    let targetIdx = idx + 1;
+
+    if (targetIdx >= contextTracks.length) {
+      if (repeatMode === "all") targetIdx = 0;
+      else {
+        setToast({ kind: "warn", message: "This is the last track." });
+        return;
+      }
+    }
+
+    const nextId = String((contextTracks[targetIdx] as any).id);
+    if (!nextId) return;
+    navigateToTrackInSameContext(nextId);
+  }, [trackId, contextTracks, contextLoading, repeatMode, navigateToTrackInSameContext]);
+
+  const durationSec = Number(track?.durationSec || 0) || 0;
+
+  const handleTrackEnded = useCallback(async () => {
+    if (endedGuardRef.current) return;
+    endedGuardRef.current = true;
+
+    if (repeatMode === "one") {
+      // restart same track
+      try {
+        await playerService.seek(0);
+      } catch {
+        // ignore
+      } finally {
+        setPositionSec(0);
+        lastTickMsRef.current = performance.now();
+        endedGuardRef.current = false; // allow end detection again later
+      }
+      return;
+    }
+
+    // "all" and "off" both attempt to goNext; if "off" and last track, we stop.
+    if (repeatMode === "off") {
+      // try next; if it can't (last track), pause locally
+      const idx = contextTracks.findIndex((t: any) => String((t as any).id) === String(trackId));
+      const isLast =
+        idx >= 0 && contextTracks.length > 0 ? idx === contextTracks.length - 1 : true;
+
+      if (isLast) {
+        setIsPlaying(false);
+        return;
+      }
+    }
+
+    goNext();
+  }, [repeatMode, goNext, contextTracks, trackId]);
+
+  // ✅ Debounced seek -> backend (used for "preview while dragging")
+  const onSeek = useCallback((next: number) => {
+    setPositionSec(next);
+
+    if (seekDebounceRef.current) window.clearTimeout(seekDebounceRef.current);
+
+    seekDebounceRef.current = window.setTimeout(async () => {
+      try {
+        await playerService.seek(next);
+        lastTickMsRef.current = performance.now();
+        endedGuardRef.current = false;
+      } catch (e: any) {
+        setToast({
+          kind: "err",
+          message: e?.response?.data?.error ?? e?.message ?? "Failed to seek.",
+        });
+      }
+    }, 140);
+  }, []);
+
+  // ✅ Commit seek at end of drag (immediate), and if seeking reaches end → go next
+  const onSeekEnd = useCallback(
+    async (finalPos: number) => {
+      // cancel pending debounced seek; we will commit immediately
       if (seekDebounceRef.current) window.clearTimeout(seekDebounceRef.current);
 
-      seekDebounceRef.current = window.setTimeout(async () => {
-        try {
-          await playerService.seek(next);
-        } catch (e: any) {
-          setToast({
-            kind: "err",
-            message: e?.response?.data?.error ?? e?.message ?? "Failed to seek.",
-          });
+      try {
+        await playerService.seek(finalPos);
+        setPositionSec(finalPos);
+        lastTickMsRef.current = performance.now();
+
+        // if user dragged to (near) end, advance as soon as seeking ends
+        if (durationSec > 0 && finalPos >= Math.max(0, durationSec - 0.25)) {
+          await handleTrackEnded();
+        } else {
+          endedGuardRef.current = false;
         }
-      }, 140);
+      } catch (e: any) {
+        setToast({
+          kind: "err",
+          message: e?.response?.data?.error ?? e?.message ?? "Failed to seek.",
+        });
+      }
     },
-    []
+    [durationSec, handleTrackEnded]
   );
+
+  // ✅ Local ticking so the seekbar moves immediately when playback starts
+  useEffect(() => {
+    // clear any previous timer
+    if (tickTimerRef.current) {
+      window.clearInterval(tickTimerRef.current);
+      tickTimerRef.current = null;
+    }
+
+    if (!isPlaying || durationSec <= 0) return;
+
+    lastTickMsRef.current = performance.now();
+
+    tickTimerRef.current = window.setInterval(() => {
+      const now = performance.now();
+      const dt = (now - lastTickMsRef.current) / 1000;
+      lastTickMsRef.current = now;
+
+      if (!Number.isFinite(dt) || dt <= 0) return;
+
+      setPositionSec((prev) => {
+        const next = prev + dt;
+        if (durationSec > 0 && next >= durationSec) {
+          // snap to end; end handler runs in a separate effect below
+          return durationSec;
+        }
+        return next;
+      });
+    }, 250);
+
+    return () => {
+      if (tickTimerRef.current) {
+        window.clearInterval(tickTimerRef.current);
+        tickTimerRef.current = null;
+      }
+    };
+  }, [isPlaying, durationSec]);
+
+  // ✅ Auto-next when track ends naturally (position reaches duration)
+  useEffect(() => {
+    if (!isPlaying) return;
+    if (durationSec <= 0) return;
+
+    if (positionSec >= Math.max(0, durationSec - 0.05)) {
+      void handleTrackEnded();
+    }
+  }, [positionSec, durationSec, isPlaying, handleTrackEnded]);
 
   // ✅ Debounced volume -> backend
   useEffect(() => {
@@ -288,8 +499,9 @@ export default function NowPlayingScreen() {
 
   // ✅ Pause/resume -> backend (called from PlaybackControls)
   const onTogglePlay = useCallback(async (nextIsPlaying: boolean) => {
-    // backend expects paused boolean
     await playerService.pause(!nextIsPlaying);
+    // keep tick baseline sane
+    lastTickMsRef.current = performance.now();
   }, []);
 
   // ✅ Keep localStorage "nowPlaying" in sync (sidebar strip + album highlight)
@@ -401,100 +613,6 @@ export default function NowPlayingScreen() {
   const artworkUrlRaw = track?.album?.coverArtPath ? String(track.album.coverArtPath) : "";
   const artworkUrl = artworkUrlRaw ? toBackendUrl(artworkUrlRaw) : "";
 
-  const durationSec = Number(track?.durationSec || 0) || 0;
-
-  const navigateToTrackInSameContext = useCallback(
-    (nextTrackId: string) => {
-      if (routeKind === "album") {
-        if (!albumId) {
-          setToast({ kind: "err", message: "albumId missing in URL." });
-          return;
-        }
-        navigate(`/albums/${albumId}/tracks/${nextTrackId}`);
-        return;
-      }
-      if (routeKind === "playlist") {
-        if (!playlistId) {
-          setToast({ kind: "err", message: "playlistId missing in URL." });
-          return;
-        }
-        navigate(`/playlists/${playlistId}/tracks/${nextTrackId}`);
-        return;
-      }
-      if (routeKind === "favourites") {
-        navigate(`/favourites/tracks/${nextTrackId}`);
-        return;
-      }
-
-      setToast({ kind: "err", message: "Unknown route context for next/previous navigation." });
-    },
-    [navigate, routeKind, albumId, playlistId]
-  );
-
-  const goPrev = useCallback(() => {
-    if (!trackId) return;
-
-    if (!contextTracks.length) {
-      setToast({
-        kind: "warn",
-        message: contextLoading ? "Loading track list…" : "No track list available for previous/next.",
-      });
-      return;
-    }
-
-    const idx = contextTracks.findIndex((t: any) => String((t as any).id) === String(trackId));
-    if (idx < 0) {
-      setToast({ kind: "warn", message: "Current track not found in list." });
-      return;
-    }
-
-    let targetIdx = idx - 1;
-
-    if (targetIdx < 0) {
-      if (repeatMode === "all") targetIdx = contextTracks.length - 1;
-      else {
-        setToast({ kind: "warn", message: "This is the first track." });
-        return;
-      }
-    }
-
-    const nextId = String((contextTracks[targetIdx] as any).id);
-    if (!nextId) return;
-    navigateToTrackInSameContext(nextId);
-  }, [trackId, contextTracks, contextLoading, repeatMode, navigateToTrackInSameContext]);
-
-  const goNext = useCallback(() => {
-    if (!trackId) return;
-
-    if (!contextTracks.length) {
-      setToast({
-        kind: "warn",
-        message: contextLoading ? "Loading track list…" : "No track list available for previous/next.",
-      });
-      return;
-    }
-
-    const idx = contextTracks.findIndex((t: any) => String((t as any).id) === String(trackId));
-    if (idx < 0) {
-      setToast({ kind: "warn", message: "Current track not found in list." });
-      return;
-    }
-
-    let targetIdx = idx + 1;
-
-    if (targetIdx >= contextTracks.length) {
-      if (repeatMode === "all") targetIdx = 0;
-      else {
-        setToast({ kind: "warn", message: "This is the last track." });
-        return;
-      }
-    }
-
-    const nextId = String((contextTracks[targetIdx] as any).id);
-    if (!nextId) return;
-    navigateToTrackInSameContext(nextId);
-  }, [trackId, contextTracks, contextLoading, repeatMode, navigateToTrackInSameContext]);
-
   return (
     <div className="min-h-screen w-full" style={bgStyle}>
       <div className="min-h-screen w-full backdrop-blur-2xl">
@@ -550,7 +668,12 @@ export default function NowPlayingScreen() {
               </div>
             </div>
 
-            <SeekBar positionSec={positionSec} durationSec={durationSec} onSeek={onSeek} />
+            <SeekBar
+              positionSec={positionSec}
+              durationSec={durationSec}
+              onSeek={onSeek}
+              onSeekEnd={onSeekEnd}
+            />
 
             <PlaybackControls
               isPlaying={isPlaying}

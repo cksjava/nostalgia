@@ -5,9 +5,10 @@ import { clamp } from "../../utils/math";
 export function SeekBar(props: {
   positionSec: number;
   durationSec: number;
-  onSeek: (next: number) => void;
+  onSeek: (next: number) => void; // preview / live updates
+  onSeekEnd?: (finalPos: number) => void; // commit when drag ends
 }) {
-  const { positionSec, durationSec, onSeek } = props;
+  const { positionSec, durationSec, onSeek, onSeekEnd } = props;
 
   const lastValueRef = useRef<number>(0);
   const isDraggingRef = useRef<boolean>(false);
@@ -23,7 +24,12 @@ export function SeekBar(props: {
   const commit = () => {
     if (!isDraggingRef.current) return;
     isDraggingRef.current = false;
-    onSeek(lastValueRef.current);
+
+    const finalPos = clamp(Number(lastValueRef.current || 0), 0, max);
+
+    // Prefer explicit commit handler if provided (lets parent decide what "end" means)
+    if (onSeekEnd) onSeekEnd(finalPos);
+    else onSeek(finalPos);
   };
 
   return (
