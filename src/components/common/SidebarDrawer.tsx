@@ -73,8 +73,9 @@ export function SidebarDrawer(props: { open: boolean; onClose: () => void }) {
     return () => window.removeEventListener("storage", onStorage);
   }, [open]);
 
-  const artworkUrl =
-    nowPlaying.artwork?.url ?? "https://placehold.co/200x200/png?text=No+Audio";
+  const fallbackArtworkUrl = "/no-audio.png";
+
+  const artworkUrl = nowPlaying.artwork?.url || fallbackArtworkUrl;
   const artworkAlt = nowPlaying.artwork?.alt ?? "Now playing cover";
 
   const title = nowPlaying.track?.title ?? "Nothing playing";
@@ -122,6 +123,12 @@ export function SidebarDrawer(props: { open: boolean; onClose: () => void }) {
                     alt={artworkAlt}
                     className="h-full w-full object-cover"
                     loading="lazy"
+                    onError={(e) => {
+                      // if stored URL is broken, fall back to local placeholder
+                      const img = e.currentTarget;
+                      if (img.src.endsWith(fallbackArtworkUrl)) return;
+                      img.src = fallbackArtworkUrl;
+                    }}
                   />
                 </div>
 
