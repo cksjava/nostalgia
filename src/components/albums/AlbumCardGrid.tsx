@@ -1,7 +1,6 @@
-// src/components/albums/AlbumCardGrid.tsx
-import type { Album } from "../../data/albums";
+import type { AlbumUI } from "../../screens/AlbumsScreen";
 
-export function AlbumCardGrid(props: { album: Album; onClick?: () => void }) {
+export function AlbumCardGrid(props: { album: AlbumUI; onClick?: () => void }) {
   const { album, onClick } = props;
 
   return (
@@ -15,7 +14,7 @@ export function AlbumCardGrid(props: { album: Album; onClick?: () => void }) {
       ].join(" ")}
     >
       <div className="p-3">
-        {/* Cover with breathing space */}
+        {/* Cover */}
         <div className="aspect-square w-full overflow-hidden rounded-xl border border-white/10 bg-white/5">
           <img
             src={album.artworkUrl}
@@ -27,12 +26,8 @@ export function AlbumCardGrid(props: { album: Album; onClick?: () => void }) {
 
         {/* Details */}
         <div className="mt-3">
-          <p className="truncate text-base font-semibold text-white">
-            {album.title}
-          </p>
-          <p className="truncate text-sm text-white/65">
-            {album.artists.join(", ")}
-          </p>
+          <p className="truncate text-base font-semibold text-white">{album.title}</p>
+          <p className="truncate text-sm text-white/65">{album.artists.join(", ")}</p>
 
           <p className="mt-1 text-xs text-white/45">
             {album.year ? `${album.year}` : ""}

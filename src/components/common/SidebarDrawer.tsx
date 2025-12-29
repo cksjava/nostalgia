@@ -7,6 +7,7 @@ import {
   faLayerGroup,
   faMusic,
   faXmark,
+  faGear,
 } from "@fortawesome/free-solid-svg-icons";
 
 type DrawerItem = {
@@ -21,6 +22,7 @@ const ITEMS: DrawerItem[] = [
   { key: "cd", label: "CD Audio", icon: faCompactDisc, route: "/cd" },
   { key: "playlists", label: "Playlists", icon: faMusic, route: "/playlists" },
   { key: "favourites", label: "Favourites", icon: faHeart, route: "/favourites" },
+  { key: "settings", label: "Settings", icon: faGear, route: "/settings" },
 ];
 
 type StoredNowPlaying = {
@@ -28,10 +30,7 @@ type StoredNowPlaying = {
   track?: { title?: string; artist?: string };
 };
 
-export function SidebarDrawer(props: {
-  open: boolean;
-  onClose: () => void;
-}) {
+export function SidebarDrawer(props: { open: boolean; onClose: () => void }) {
   const { open, onClose } = props;
   const navigate = useNavigate();
 
@@ -56,9 +55,7 @@ export function SidebarDrawer(props: {
   }, []);
 
   const artworkUrl =
-    nowPlaying.artwork?.url ??
-    "https://placehold.co/200x200/png?text=No+Audio";
-
+    nowPlaying.artwork?.url ?? "https://placehold.co/200x200/png?text=No+Audio";
   const artworkAlt = nowPlaying.artwork?.alt ?? "Now playing cover";
 
   const title = nowPlaying.track?.title ?? "Nothing playing";
@@ -99,8 +96,9 @@ export function SidebarDrawer(props: {
           {/* Top area */}
           <div className="p-4">
             <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="h-14 w-14 overflow-hidden rounded-xl border border-white/10 bg-white/5">
+              {/* CHANGED: make row layout properly constrain text */}
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/5">
                   <img
                     src={artworkUrl}
                     alt={artworkAlt}
@@ -109,14 +107,17 @@ export function SidebarDrawer(props: {
                   />
                 </div>
 
-                <div className="min-w-0">
-                  <p className="text-xs tracking-widest text-white/60">
-                    NOW PLAYING
-                  </p>
-                  <p className="truncate text-base font-semibold text-white">
+                {/* CHANGED: flex-1 + min-w-0 ensures truncation actually works */}
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs tracking-widest text-white/60">NOW PLAYING</p>
+
+                  {/* CHANGED: explicit block + w-full + truncate */}
+                  <p className="block w-full truncate text-base font-semibold text-white">
                     {title}
                   </p>
-                  <p className="truncate text-sm text-white/70">
+
+                  {/* CHANGED: explicit block + w-full + truncate */}
+                  <p className="block w-full truncate text-sm text-white/70">
                     {subtitle}
                   </p>
                 </div>
@@ -125,7 +126,7 @@ export function SidebarDrawer(props: {
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-full p-2 text-white/70 hover:bg-white/10 hover:text-white"
+                className="shrink-0 rounded-full p-2 text-white/70 hover:bg-white/10 hover:text-white"
                 aria-label="Close menu"
                 title="Close"
               >

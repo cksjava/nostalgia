@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { albums as ALBUMS } from "../data/albums";
 import type { NowPlayingData } from "../types/nowPlaying";
 
 import { AlbumCardGrid } from "../components/albums/AlbumCardGrid";
@@ -17,13 +16,94 @@ import {
   faGrip,
   faMusic,
   faEllipsisVertical,
+  faCircleNotch,
+  faTriangleExclamation,
+  faCheck,
 } from "@fortawesome/free-solid-svg-icons";
+
+import { albumsService } from "../api/services/albumsService";
+import type { Album as AlbumDto } from "../api/types/models";
+import { toBackendUrl } from "../api/utils/url";
 
 type ViewMode = "grid" | "list";
 
-export default function AlbumsScreen(props: {
-  nowPlaying?: NowPlayingData;
-}) {
+/**
+ * UI-friendly album model that your existing cards already expect.
+ * Backend doesn't currently expose trackCount or a public cover URL,
+ * so we map fields and provide a placeholder image.
+ */
+export type AlbumUI = {
+  id: string;
+  title: string;
+  artists: string[];
+  year?: number;
+  trackCount?: number;
+  artworkUrl: string;
+  // Keep raw DTO if you want later screens to use it:
+  raw: AlbumDto;
+};
+
+function safeJsonArray(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map((x) => String(x)).filter(Boolean);
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+function svgPlaceholderDataUrl(title: string) {
+  const safe = (title || "Album").slice(0, 22);
+  const svg = `
+  <svg xmlns="http://www.w3.org/2000/svg" width="800" height="800">
+    <defs>
+      <radialGradient id="g1" cx="25%" cy="20%" r="80%">
+        <stop offset="0%" stop-color="rgba(255,110,90,0.55)"/>
+        <stop offset="60%" stop-color="rgba(0,0,0,0)"/>
+      </radialGradient>
+      <radialGradient id="g2" cx="85%" cy="30%" r="80%">
+        <stop offset="0%" stop-color="rgba(110,160,255,0.55)"/>
+        <stop offset="55%" stop-color="rgba(0,0,0,0)"/>
+      </radialGradient>
+      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="rgba(10,12,18,0.92)"/>
+        <stop offset="100%" stop-color="rgba(8,10,16,0.92)"/>
+      </linearGradient>
+    </defs>
+    <rect width="800" height="800" fill="url(#bg)"/>
+    <rect width="800" height="800" fill="url(#g1)"/>
+    <rect width="800" height="800" fill="url(#g2)"/>
+    <circle cx="400" cy="400" r="140" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.12)" />
+    <circle cx="400" cy="400" r="26" fill="rgba(255,255,255,0.10)" stroke="rgba(255,255,255,0.18)" />
+    <text x="50%" y="82%" fill="rgba(255,255,255,0.55)" font-size="32" font-family="ui-sans-serif, system-ui" text-anchor="middle">
+      ${safe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}
+    </text>
+  </svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg.trim())}`;
+}
+
+/**
+ * If later you expose album art via backend static route,
+ * update this to build a real URL from coverArtPath.
+ */
+function coverUrlFromDto(dto: AlbumDto): string {
+  const p = dto.coverArtPath ? String(dto.coverArtPath) : "";
+  if (p) return p; // now it’s a full URL (or /covers/..)
+  return svgPlaceholderDataUrl(dto.title);
+}
+
+function artistsFromDto(dto: AlbumDto): string[] {
+  // Prefer albumArtists (JSON array) if present, else albumArtist (single string)
+  const arr = safeJsonArray(dto.albumArtists);
+  if (arr.length) return arr;
+
+  const single = dto.albumArtist ? String(dto.albumArtist).trim() : "";
+  return single ? [single] : ["Unknown Artist"];
+}
+
+export default function AlbumsScreen(props: { nowPlaying?: NowPlayingData }) {
   const { nowPlaying } = props;
 
   const navigate = useNavigate();
@@ -31,6 +111,16 @@ export default function AlbumsScreen(props: {
   const [query, setQuery] = useState("");
   const [view, setView] = useState<ViewMode>("grid");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  const [albums, setAlbums] = useState<AlbumUI[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [toast, setToast] = useState<{
+    kind: "ok" | "warn" | "err";
+    message: string;
+  } | null>(null);
+
+  const lastReqId = useRef(0);
 
   // Close sidebar on Escape (same behavior as NowPlaying)
   useEffect(() => {
@@ -42,16 +132,62 @@ export default function AlbumsScreen(props: {
     return () => document.removeEventListener("keydown", onKey);
   }, [isSidebarOpen]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return ALBUMS;
+  // Auto-hide toast
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(null), 3200);
+    return () => window.clearTimeout(t);
+  }, [toast]);
 
-    return ALBUMS.filter((a) =>
-      [a.title, a.artists.join(" "), a.year?.toString() ?? ""]
-        .join(" ")
-        .toLowerCase()
-        .includes(q)
-    );
+  const loadAlbums = async (search?: string) => {
+    const reqId = ++lastReqId.current;
+    setLoading(true);
+    try {
+      const rows = await albumsService.search({
+        search: (search || "").trim() || undefined,
+        limit: 200,
+        offset: 0,
+      });
+
+      // Ignore out-of-order responses
+      if (reqId !== lastReqId.current) return;
+
+      const mapped: AlbumUI[] = rows.map((dto) => ({
+        id: dto.id,
+        title: dto.title,
+        artists: artistsFromDto(dto),
+        year: dto.year ?? undefined,
+        // trackCount is not available yet from backend list endpoint:
+        trackCount: dto.trackCount,
+        artworkUrl: toBackendUrl(dto.coverArtPath),
+        raw: dto,
+      }));
+
+      setAlbums(mapped);
+    } catch (e: any) {
+      if (reqId !== lastReqId.current) return;
+      setToast({
+        kind: "err",
+        message: e?.response?.data?.error ?? e?.message ?? "Failed to load albums.",
+      });
+    } finally {
+      if (reqId === lastReqId.current) setLoading(false);
+    }
+  };
+
+  // Initial load
+  useEffect(() => {
+    void loadAlbums("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Debounced search (server-side)
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      void loadAlbums(query);
+    }, 220);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
   // Same background style as Now Playing
@@ -63,6 +199,20 @@ export default function AlbumsScreen(props: {
       linear-gradient(135deg, rgba(10, 12, 18, 0.92), rgba(8, 10, 16, 0.92))
     `,
   };
+
+  const toastIcon =
+    toast?.kind === "ok"
+      ? faCheck
+      : toast?.kind === "warn"
+      ? faTriangleExclamation
+      : faTriangleExclamation;
+
+  const toastStyle =
+    toast?.kind === "ok"
+      ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100"
+      : toast?.kind === "warn"
+      ? "border-amber-400/20 bg-amber-500/10 text-amber-100"
+      : "border-rose-400/20 bg-rose-500/10 text-rose-100";
 
   return (
     <div className="min-h-screen w-full" style={bgStyle}>
@@ -89,6 +239,7 @@ export default function AlbumsScreen(props: {
             className="rounded-full p-2 text-white/75 hover:bg-white/10 hover:text-white"
             aria-label="More"
             title="More"
+            onClick={() => setToast({ kind: "warn", message: "More actions coming soon." })}
           >
             <FontAwesomeIcon icon={faEllipsisVertical} />
           </button>
@@ -97,14 +248,12 @@ export default function AlbumsScreen(props: {
         {/* Main card */}
         <main className="mx-auto w-full max-w-md px-4 pb-10 pt-4">
           <section className="rounded-[1.75rem] border border-white/10 bg-black/25 shadow-2xl shadow-black/40 backdrop-blur-2xl">
-            <div className="p-4">
+            {/* CHANGED: bound height + column layout so only the list scrolls */}
+            <div className="flex max-h-[calc(100vh-11.5rem)] flex-col p-4">
               {/* Search + view switch */}
               <div className="flex items-center gap-3">
                 <div className="flex flex-1 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
-                  <FontAwesomeIcon
-                    icon={faMagnifyingGlass}
-                    className="text-white/45"
-                  />
+                  <FontAwesomeIcon icon={faMagnifyingGlass} className="text-white/45" />
                   <input
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
@@ -152,14 +301,20 @@ export default function AlbumsScreen(props: {
               <div className="mt-4 h-px w-full bg-white/10" />
 
               {/* Albums */}
-              <div className="mt-4 pb-2">
-                {filtered.length === 0 ? (
+              {/* CHANGED: this is the scroll container */}
+              <div className="mt-4 flex-1 overflow-y-auto pb-2">
+                {loading ? (
+                  <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/70">
+                    <FontAwesomeIcon icon={faCircleNotch} spin className="text-white/60" />
+                    Loading albums…
+                  </div>
+                ) : albums.length === 0 ? (
                   <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-center text-sm text-white/60">
                     No albums found.
                   </div>
                 ) : view === "grid" ? (
                   <div className="space-y-3">
-                    {filtered.map((album) => (
+                    {albums.map((album) => (
                       <AlbumCardGrid
                         key={album.id}
                         album={album}
@@ -173,11 +328,11 @@ export default function AlbumsScreen(props: {
                   </div>
                 ) : (
                   <div className="rounded-xl border border-white/10 bg-white/5">
-                    {filtered.map((album, idx) => (
+                    {albums.map((album, idx) => (
                       <AlbumRowList
                         key={album.id}
                         album={album}
-                        showDivider={idx !== filtered.length - 1}
+                        showDivider={idx !== albums.length - 1}
                         onClick={() =>
                           navigate("/album", {
                             state: { album, nowPlaying },
@@ -188,15 +343,22 @@ export default function AlbumsScreen(props: {
                   </div>
                 )}
               </div>
+
+              {/* Toast */}
+              {toast && (
+                <div className="mt-3">
+                  <div className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm ${toastStyle}`}>
+                    <FontAwesomeIcon icon={toastIcon} className="mt-0.5 shrink-0" />
+                    <span className="leading-snug">{toast.message}</span>
+                  </div>
+                </div>
+              )}
             </div>
           </section>
         </main>
 
-        {/* Sidebar drawer (shared with Now Playing) */}
-        <SidebarDrawer
-          open={isSidebarOpen}
-          onClose={() => setIsSidebarOpen(false)}
-        />
+        {/* Sidebar drawer */}
+        <SidebarDrawer open={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
       </div>
     </div>
   );

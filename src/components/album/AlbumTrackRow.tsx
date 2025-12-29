@@ -1,98 +1,102 @@
-// src/components/album/AlbumTrackRow.tsx
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import {
-  faHeart,
-  faListUl,
-  faPlay,
-} from "@fortawesome/free-solid-svg-icons";
-import type { AlbumTrack } from "../../types/nowPlaying";
-import { formatTime } from "../../utils/format";
+import { faListUl, faHeart } from "@fortawesome/free-solid-svg-icons";
+
+type TrackRowUI = {
+  no: number;
+  title: string;
+  duration?: string;
+  isFavourite?: boolean;
+  trackId?: string;
+};
 
 export function AlbumTrackRow(props: {
-  track: AlbumTrack;
-  artistLine: string;              // ✅ show artists under track title
+  track: TrackRowUI;
+  artistLine?: string;
   active?: boolean;
   showDivider?: boolean;
-  onPlay?: (trackNo: number) => void;      // ✅ clicking row plays
-  onAddToPlaylist?: (trackNo: number) => void;
-  onAddToFavourites?: (trackNo: number) => void;
+
+  onPlay: (trackNo: number) => void;
+  onAddToPlaylist: (trackNo: number) => void;
+  onAddToFavourites: (trackNo: number) => void;
 }) {
-  const {
-    track,
-    artistLine,
-    active,
-    showDivider = true,
-    onPlay,
-    onAddToPlaylist,
-    onAddToFavourites,
-  } = props;
+  const { track, artistLine, active, showDivider, onPlay, onAddToPlaylist, onAddToFavourites } =
+    props;
+
+  const isFav = !!track.isFavourite;
+
+  const rowBase = "w-full px-3 py-3 text-left transition select-none";
+  const rowState = active ? "bg-white/10" : "hover:bg-white/5";
+  const titleColor = active ? "text-white" : "text-white/90";
+  const metaColor = active ? "text-white/70" : "text-white/60";
+  const divider = showDivider ? "border-b border-white/10" : "";
 
   return (
-    <div>
-      <button
-        type="button"
-        onClick={() => onPlay?.(track.no)}
-        className={[
-          "flex w-full items-center gap-3 px-3 py-3 text-left transition",
-          active ? "bg-white/10" : "hover:bg-white/10",
-        ].join(" ")}
+    <div className={divider}>
+      <div
+        className={`${rowBase} ${rowState}`}
+        onClick={() => onPlay(track.no)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") onPlay(track.no);
+        }}
       >
-        <div
-          className={[
-            "grid h-10 w-10 shrink-0 place-items-center rounded-xl border",
-            active ? "border-white/25 bg-white/10" : "border-white/10 bg-white/5",
-          ].join(" ")}
-        >
-          {active ? (
-            <FontAwesomeIcon icon={faPlay} className="text-white/85" />
-          ) : (
-            <span className="text-sm font-semibold text-white/80">{track.no}</span>
-          )}
-        </div>
+        <div className="grid grid-cols-[minmax(0,1fr)_2.5rem_2.5rem] items-start gap-2">
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-start gap-2">
+              <span className={`shrink-0 w-7 text-right text-xs ${metaColor} pt-[2px]`}>
+                {track.no}.
+              </span>
 
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-white/90">
-            {track.title}
-          </p>
-          <p className="truncate text-xs text-white/55">{artistLine}</p>
-        </div>
+              <div className="min-w-0">
+                <p className={`truncate text-sm font-medium ${titleColor}`}>{track.title}</p>
 
-        <div className="flex items-center gap-2">
-          {/* Add to playlist */}
+                <div className="mt-0.5 flex items-center gap-2 min-w-0">
+                  {artistLine ? (
+                    <span className={`truncate text-xs ${metaColor}`}>{artistLine}</span>
+                  ) : null}
+
+                  {track.duration ? (
+                    <>
+                      <span className={`text-xs ${metaColor}`}>•</span>
+                      <span className={`text-xs ${metaColor}`}>{track.duration}</span>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onAddToPlaylist?.(track.no);
+              onAddToPlaylist(track.no);
             }}
-            className="rounded-full p-2 text-white/55 hover:bg-white/10 hover:text-white"
+            className="h-9 w-9 rounded-xl border border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
             aria-label="Add to playlist"
             title="Add to playlist"
           >
             <FontAwesomeIcon icon={faListUl} />
           </button>
 
-          {/* Add to favourites */}
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onAddToFavourites?.(track.no);
+              onAddToFavourites(track.no);
             }}
-            className="rounded-full p-2 text-white/55 hover:bg-white/10 hover:text-white"
-            aria-label="Add to favourites"
-            title="Add to favourites"
+            className="h-9 w-9 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition"
+            aria-label={isFav ? "Remove from favourites" : "Add to favourites"}
+            title={isFav ? "Remove from favourites" : "Add to favourites"}
           >
-            <FontAwesomeIcon icon={faHeart} />
+            <FontAwesomeIcon
+              icon={faHeart}
+              className={isFav ? "text-red-400" : "text-white/45 hover:text-white/70"}
+            />
           </button>
-
-          <div className="w-12 text-right text-xs text-white/45 tabular-nums">
-            {track.durationSec != null ? formatTime(track.durationSec) : ""}
-          </div>
         </div>
-      </button>
-
-      {showDivider ? <div className="mx-3 h-px bg-white/10" /> : null}
+      </div>
     </div>
   );
 }

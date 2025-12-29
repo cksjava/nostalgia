@@ -1,6 +1,6 @@
-// src/screens/NowPlayingScreen.tsx
 import React, { useEffect, useRef, useState } from "react";
-import nowPlayingRaw from "../data/nowPlayingData.json";
+import { useParams } from "react-router-dom";
+
 import type { NowPlayingData, RepeatMode } from "../types/nowPlaying";
 
 import { NowPlayingHeader } from "../components/nowPlaying/NowPlayingHeader";
@@ -14,15 +14,31 @@ import { PlaybackControls } from "../components/nowPlaying/PlaybackControls";
 import { SidebarDrawer } from "../components/common/SidebarDrawer";
 import { TrackListSheet } from "../components/nowPlaying/TrackListSheet";
 
+import { tracksService } from "../api/services/tracksService";
+import type { Track as TrackDto } from "../api/types/models";
+import { toBackendUrl } from "../api/utils/url";
+
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faPlus } from "@fortawesome/free-solid-svg-icons";
+import { AddToPlaylistModal } from "../components/playlists/AddToPlaylistModal";
+
 export default function NowPlayingScreen() {
-  const data = nowPlayingRaw as NowPlayingData;
+  const { trackId } = useParams<{ trackId: string }>();
+
+  const [track, setTrack] = useState<TrackDto | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const [toast, setToast] = useState<{
+    kind: "ok" | "warn" | "err";
+    message: string;
+  } | null>(null);
 
   // Local UI state (swap with API/websocket later)
-  const [isPlaying, setIsPlaying] = useState<boolean>(data.playback.isPlaying);
-  const [shuffle, setShuffle] = useState<boolean>(data.playback.shuffle);
-  const [repeatMode, setRepeatMode] = useState<RepeatMode>(data.playback.repeatMode);
-  const [positionSec, setPositionSec] = useState<number>(data.playback.positionSec);
-  const [volume, setVolume] = useState<number>(data.playback.volume);
+  const [isPlaying, setIsPlaying] = useState<boolean>(true);
+  const [shuffle, setShuffle] = useState<boolean>(false);
+  const [repeatMode, setRepeatMode] = useState<RepeatMode>("off");
+  const [positionSec, setPositionSec] = useState<number>(0);
+  const [volume, setVolume] = useState<number>(70);
 
   const [isVolumeOpen, setIsVolumeOpen] = useState(false);
   const volPanelRef = useRef<HTMLDivElement | null>(null);
@@ -30,7 +46,7 @@ export default function NowPlayingScreen() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isTrackListOpen, setIsTrackListOpen] = useState(false);
 
-  const durationSec = data.playback.durationSec;
+  const [isAddToPlaylistOpen, setIsAddToPlaylistOpen] = useState(false);
 
   const bgStyle: React.CSSProperties = {
     backgroundImage: `
@@ -45,35 +61,100 @@ export default function NowPlayingScreen() {
     setRepeatMode((prev) => (prev === "off" ? "all" : prev === "all" ? "one" : "off"));
   };
 
-  // ✅ Initialize / keep localStorage "nowPlaying" in sync
+  // Auto-hide toast
   useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(null), 3200);
+    return () => window.clearTimeout(t);
+  }, [toast]);
+
+  // Load track details from backend
+  useEffect(() => {
+    if (!trackId) {
+      setToast({ kind: "err", message: "Track id missing in URL." });
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const load = async () => {
+      setLoading(true);
+      try {
+        const dto = await tracksService.getById(trackId, { withAlbum: true });
+        if (cancelled) return;
+        setTrack(dto);
+      } catch (e: any) {
+        if (cancelled) return;
+        setToast({
+          kind: "err",
+          message: e?.response?.data?.error ?? e?.message ?? "Failed to load track.",
+        });
+        setTrack(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [trackId]);
+
+  // Send play signal whenever trackId changes
+  useEffect(() => {
+    if (!trackId) return;
+
+    let cancelled = false;
+
+    const play = async () => {
+      try {
+        await tracksService.play(trackId, { positionSec: 0 });
+        if (cancelled) return;
+        setIsPlaying(true);
+      } catch (e: any) {
+        if (cancelled) return;
+        setToast({
+          kind: "err",
+          message: e?.response?.data?.error ?? e?.message ?? "Failed to start playback.",
+        });
+      }
+    };
+
+    void play();
+    return () => {
+      cancelled = true;
+    };
+  }, [trackId]);
+
+  // ✅ Keep localStorage "nowPlaying" in sync (for sidebar strip etc.)
+  useEffect(() => {
+    if (!track) return;
+
+    const albumCoverPath = track.album?.coverArtPath ? String(track.album.coverArtPath) : "";
+    const artworkUrl = albumCoverPath ? toBackendUrl(albumCoverPath) : "";
+
+    const title = String(track.title || "Unknown Track");
+    const artist = String(track.trackArtist || "Unknown Artist");
+    const album = String(track.album?.title || "Unknown Album");
+
+    const durationSec = Number(track.durationSec || 0) || 0;
+
     try {
       localStorage.setItem(
         "nowPlaying",
         JSON.stringify({
-          artwork: {
-            url: data.artwork.url,
-            alt: data.artwork.alt,
-          },
-          track: {
-            title: data.track.title,
-            artist: data.track.artist,
-            album: data.track.album,
-          },
-          playback: {
-            isPlaying,
-            positionSec,
-            durationSec: data.playback.durationSec,
-            volume,
-          },
-          deviceName: data.deviceName,
-        })
+          artwork: { url: artworkUrl, alt: `${title} artwork` },
+          track: { title, artist, album, isExplicit: !!(track as any)?.isExplicit },
+          playback: { isPlaying, positionSec, durationSec, volume },
+          deviceName: "Raspberry Pi",
+        } as NowPlayingData)
       );
     } catch {
-      // ignore storage errors (private mode / quota)
+      // ignore storage errors
     }
-    // Keep it updated for the sidebar and other screens
-  }, [data, isPlaying, positionSec, volume]);
+  }, [track, isPlaying, positionSec, volume]);
 
   // Close volume popover on outside click / Escape
   useEffect(() => {
@@ -124,6 +205,16 @@ export default function NowPlayingScreen() {
     if (isTrackListOpen) setIsSidebarOpen(false);
   }, [isTrackListOpen]);
 
+  // Derive UI meta from track
+  const title = String(track?.title || "—");
+  const artist = String(track?.trackArtist || "—");
+  const album = String(track?.album?.title || "—");
+
+  const artworkUrlRaw = track?.album?.coverArtPath ? String(track.album.coverArtPath) : "";
+  const artworkUrl = artworkUrlRaw ? toBackendUrl(artworkUrlRaw) : "";
+
+  const durationSec = Number(track?.durationSec || 0) || 0;
+
   return (
     <div className="min-h-screen w-full" style={bgStyle}>
       <div className="min-h-screen w-full backdrop-blur-2xl">
@@ -142,51 +233,76 @@ export default function NowPlayingScreen() {
           </NowPlayingHeader>
 
           <NowPlayingCard>
-            <Artwork src={data.artwork.url} alt={data.artwork.alt} />
+            <Artwork src={artworkUrl || "/placeholder.png"} alt={artworkUrl ? `${title} artwork` : "Artwork"} />
 
-            <div className="mt-5">
+            <div className="mt-4">
               <div className="flex items-start justify-between gap-3">
                 <TrackMeta
-                  title={data.track.title}
-                  artist={data.track.artist}
-                  album={data.track.album}
-                  isExplicit={data.track.isExplicit}
+                  title={loading ? "Loading…" : title}
+                  artist={loading ? "" : artist}
+                  album={loading ? "" : album}
+                  isExplicit={!!(track as any)?.isExplicit}
                 />
 
-                <ShuffleRepeatControls
-                  shuffle={shuffle}
-                  setShuffle={setShuffle}
-                  repeatMode={repeatMode}
-                  onToggleRepeat={onToggleRepeat}
-                />
+                {/* Right side controls: + (add to playlist) + shuffle/repeat */}
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddToPlaylistOpen(true)}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70 transition hover:bg-white/10 hover:text-white active:scale-[0.98]"
+                    aria-label="Add to playlist"
+                    title="Add to playlist"
+                    disabled={!trackId}
+                  >
+                    <FontAwesomeIcon icon={faPlus} />
+                  </button>
+
+                  <ShuffleRepeatControls
+                    shuffle={shuffle}
+                    setShuffle={setShuffle}
+                    repeatMode={repeatMode}
+                    onToggleRepeat={onToggleRepeat}
+                  />
+                </div>
               </div>
             </div>
 
-            <SeekBar
-              positionSec={positionSec}
-              durationSec={durationSec}
-              onSeek={setPositionSec}
-            />
-
+            <SeekBar positionSec={positionSec} durationSec={durationSec} onSeek={setPositionSec} />
             <PlaybackControls isPlaying={isPlaying} setIsPlaying={setIsPlaying} />
+
+            {toast ? (
+              <div className="mt-3">
+                <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/70">
+                  {toast.message}
+                </div>
+              </div>
+            ) : null}
           </NowPlayingCard>
         </div>
 
-        {/* ✅ SidebarDrawer is now independent: only open/onClose */}
         <SidebarDrawer open={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
 
-        {data.album?.tracks?.length ? (
+        {trackId && isTrackListOpen ? (
           <TrackListSheet
-            open={isTrackListOpen}
+            open={false}
             onClose={() => setIsTrackListOpen(false)}
-            artworkUrl={data.artwork.url}
-            albumTitle={data.album.title}
-            albumArtist={data.album.artist}
-            tracks={data.album.tracks}
-            currentTrackNo={data.album.currentTrackNo}
-            onSelectTrack={(trackNo) => {
-              console.log("Selected track:", trackNo);
-            }}
+            artworkUrl={artworkUrl}
+            albumTitle={album}
+            albumArtist={artist}
+            tracks={[]}
+            currentTrackNo={1}
+            onSelectTrack={() => {}}
+          />
+        ) : null}
+
+        {/* Add to playlist modal */}
+        {trackId ? (
+          <AddToPlaylistModal
+            open={isAddToPlaylistOpen}
+            onClose={() => setIsAddToPlaylistOpen(false)}
+            trackId={trackId}
+            trackTitle={title}
+            onToast={(t) => setToast(t)}
           />
         ) : null}
       </div>

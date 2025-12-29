@@ -1,8 +1,7 @@
-// src/components/albums/AlbumRowList.tsx
-import type { Album } from "../../data/albums";
+import type { AlbumUI } from "../../screens/AlbumsScreen";
 
 export function AlbumRowList(props: {
-  album: Album;
+  album: AlbumUI;
   onClick?: () => void;
   showDivider?: boolean;
 }) {
@@ -19,7 +18,7 @@ export function AlbumRowList(props: {
           "transition hover:bg-white/10",
         ].join(" ")}
       >
-        {/* Slightly larger cover */}
+        {/* Cover */}
         <div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/5">
           <img
             src={album.artworkUrl}
@@ -30,12 +29,8 @@ export function AlbumRowList(props: {
         </div>
 
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-white">
-            {album.title}
-          </p>
-          <p className="truncate text-xs text-white/60">
-            {album.artists.join(", ")}
-          </p>
+          <p className="truncate text-sm font-semibold text-white">{album.title}</p>
+          <p className="truncate text-xs text-white/60">{album.artists.join(", ")}</p>
         </div>
 
         <div className="shrink-0 text-right text-xs text-white/45">
@@ -44,10 +39,7 @@ export function AlbumRowList(props: {
         </div>
       </button>
 
-      {/* Thin divider */}
-      {showDivider && (
-        <div className="mx-3 h-px bg-white/10" />
-      )}
+      {showDivider && <div className="mx-3 h-px bg-white/10" />}
     </div>
   );
 }
