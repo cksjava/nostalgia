@@ -17,6 +17,7 @@ import { TrackListSheet } from "../components/nowPlaying/TrackListSheet";
 import { tracksService } from "../api/services/tracksService";
 import { albumsService } from "../api/services/albumsService";
 import { playlistsService } from "../api/services/playlistsService";
+import { playerService } from "../api/services/playerService";
 
 import type { Track as TrackDto } from "../api/types/models";
 import { toBackendUrl } from "../api/utils/url";
@@ -32,7 +33,6 @@ type RouteParams = {
 };
 
 function sortAlbumLike(tracks: TrackDto[]) {
-  // Sort by discNo -> trackNo -> title
   return [...tracks].sort((a, b) => {
     const ad = a.discNo != null ? Number(a.discNo) : 0;
     const bd = b.discNo != null ? Number(b.discNo) : 0;
@@ -77,6 +77,10 @@ export default function NowPlayingScreen() {
   // Track list for prev/next navigation
   const [contextTracks, setContextTracks] = useState<TrackDto[]>([]);
   const [contextLoading, setContextLoading] = useState(false);
+
+  // Debounce refs
+  const seekDebounceRef = useRef<number | null>(null);
+  const volDebounceRef = useRef<number | null>(null);
 
   const bgStyle: React.CSSProperties = {
     backgroundImage: `
@@ -214,7 +218,7 @@ export default function NowPlayingScreen() {
     };
   }, [trackId]);
 
-  // Send play signal whenever trackId changes
+  // Send play signal whenever trackId changes (existing play API)
   useEffect(() => {
     if (!trackId) return;
 
@@ -241,7 +245,54 @@ export default function NowPlayingScreen() {
     };
   }, [trackId]);
 
-  // ✅ Keep localStorage "nowPlaying" in sync (for sidebar strip + album highlight)
+  // ✅ Debounced seek -> backend
+  const onSeek = useCallback(
+    (next: number) => {
+      setPositionSec(next);
+
+      if (seekDebounceRef.current) window.clearTimeout(seekDebounceRef.current);
+
+      seekDebounceRef.current = window.setTimeout(async () => {
+        try {
+          await playerService.seek(next);
+        } catch (e: any) {
+          setToast({
+            kind: "err",
+            message: e?.response?.data?.error ?? e?.message ?? "Failed to seek.",
+          });
+        }
+      }, 140);
+    },
+    []
+  );
+
+  // ✅ Debounced volume -> backend
+  useEffect(() => {
+    if (volDebounceRef.current) window.clearTimeout(volDebounceRef.current);
+
+    volDebounceRef.current = window.setTimeout(async () => {
+      try {
+        await playerService.setVolume(volume);
+      } catch (e: any) {
+        setToast({
+          kind: "err",
+          message: e?.response?.data?.error ?? e?.message ?? "Failed to set volume.",
+        });
+      }
+    }, 160);
+
+    return () => {
+      if (volDebounceRef.current) window.clearTimeout(volDebounceRef.current);
+    };
+  }, [volume]);
+
+  // ✅ Pause/resume -> backend (called from PlaybackControls)
+  const onTogglePlay = useCallback(async (nextIsPlaying: boolean) => {
+    // backend expects paused boolean
+    await playerService.pause(!nextIsPlaying);
+  }, []);
+
+  // ✅ Keep localStorage "nowPlaying" in sync (sidebar strip + album highlight)
   useEffect(() => {
     if (!track) return;
 
@@ -252,9 +303,8 @@ export default function NowPlayingScreen() {
     const tArtist = String(track.trackArtist || "Unknown Artist");
     const tAlbumTitle = String(track.album?.title || "Unknown Album");
 
-    const durationSec = Number(track.durationSec || 0) || 0;
+    const duration = Number(track.durationSec || 0) || 0;
 
-    // ✅ IDs (what we need for AlbumScreen highlight)
     const resolvedTrackId = String((track as any)?.id ?? trackId ?? "");
     const resolvedAlbumId =
       routeKind === "album"
@@ -269,7 +319,6 @@ export default function NowPlayingScreen() {
         JSON.stringify({
           artwork: { url: artworkUrl, alt: `${tTitle} artwork` },
 
-          // ✅ store ids inside track + album
           track: {
             id: resolvedTrackId,
             title: tTitle,
@@ -278,21 +327,15 @@ export default function NowPlayingScreen() {
             isExplicit: !!(track as any)?.isExplicit,
           },
 
-          album: resolvedAlbumId
-            ? {
-                id: resolvedAlbumId,
-                title: tAlbumTitle,
-              }
-            : undefined,
+          album: resolvedAlbumId ? { id: resolvedAlbumId, title: tAlbumTitle } : undefined,
 
-          // optional but useful for debugging / future features
           context: {
             kind: routeKind,
             albumId: albumId ? String(albumId) : undefined,
             playlistId: playlistId ? String(playlistId) : undefined,
           },
 
-          playback: { isPlaying, positionSec, durationSec, volume },
+          playback: { isPlaying, positionSec, durationSec: duration, volume },
           deviceName: "Raspberry Pi",
         } as any as NowPlayingData)
       );
@@ -507,11 +550,12 @@ export default function NowPlayingScreen() {
               </div>
             </div>
 
-            <SeekBar positionSec={positionSec} durationSec={durationSec} onSeek={setPositionSec} />
+            <SeekBar positionSec={positionSec} durationSec={durationSec} onSeek={onSeek} />
 
             <PlaybackControls
               isPlaying={isPlaying}
               setIsPlaying={setIsPlaying}
+              onTogglePlay={onTogglePlay}
               onPrev={goPrev}
               onNext={goNext}
             />
