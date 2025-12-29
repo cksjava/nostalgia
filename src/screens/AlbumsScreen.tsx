@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import type { NowPlayingData } from "../types/nowPlaying";
@@ -52,46 +52,6 @@ function safeJsonArray(raw: string | null | undefined): string[] {
   } catch {
     return [];
   }
-}
-
-function svgPlaceholderDataUrl(title: string) {
-  const safe = (title || "Album").slice(0, 22);
-  const svg = `
-  <svg xmlns="http://www.w3.org/2000/svg" width="800" height="800">
-    <defs>
-      <radialGradient id="g1" cx="25%" cy="20%" r="80%">
-        <stop offset="0%" stop-color="rgba(255,110,90,0.55)"/>
-        <stop offset="60%" stop-color="rgba(0,0,0,0)"/>
-      </radialGradient>
-      <radialGradient id="g2" cx="85%" cy="30%" r="80%">
-        <stop offset="0%" stop-color="rgba(110,160,255,0.55)"/>
-        <stop offset="55%" stop-color="rgba(0,0,0,0)"/>
-      </radialGradient>
-      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="rgba(10,12,18,0.92)"/>
-        <stop offset="100%" stop-color="rgba(8,10,16,0.92)"/>
-      </linearGradient>
-    </defs>
-    <rect width="800" height="800" fill="url(#bg)"/>
-    <rect width="800" height="800" fill="url(#g1)"/>
-    <rect width="800" height="800" fill="url(#g2)"/>
-    <circle cx="400" cy="400" r="140" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.12)" />
-    <circle cx="400" cy="400" r="26" fill="rgba(255,255,255,0.10)" stroke="rgba(255,255,255,0.18)" />
-    <text x="50%" y="82%" fill="rgba(255,255,255,0.55)" font-size="32" font-family="ui-sans-serif, system-ui" text-anchor="middle">
-      ${safe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}
-    </text>
-  </svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg.trim())}`;
-}
-
-/**
- * If later you expose album art via backend static route,
- * update this to build a real URL from coverArtPath.
- */
-function coverUrlFromDto(dto: AlbumDto): string {
-  const p = dto.coverArtPath ? String(dto.coverArtPath) : "";
-  if (p) return p; // now it’s a full URL (or /covers/..)
-  return svgPlaceholderDataUrl(dto.title);
 }
 
 function artistsFromDto(dto: AlbumDto): string[] {
