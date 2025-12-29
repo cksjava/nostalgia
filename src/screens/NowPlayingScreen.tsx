@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import type { NowPlayingData, RepeatMode } from "../types/nowPlaying";
 
@@ -15,6 +15,9 @@ import { SidebarDrawer } from "../components/common/SidebarDrawer";
 import { TrackListSheet } from "../components/nowPlaying/TrackListSheet";
 
 import { tracksService } from "../api/services/tracksService";
+import { albumsService } from "../api/services/albumsService";
+import { playlistsService } from "../api/services/playlistsService";
+
 import type { Track as TrackDto } from "../api/types/models";
 import { toBackendUrl } from "../api/utils/url";
 
@@ -22,8 +25,31 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faPlus } from "@fortawesome/free-solid-svg-icons";
 import { AddToPlaylistModal } from "../components/playlists/AddToPlaylistModal";
 
+type RouteParams = {
+  albumId?: string;
+  playlistId?: string;
+  trackId?: string;
+};
+
+function sortAlbumLike(tracks: TrackDto[]) {
+  // Sort by discNo -> trackNo -> title
+  return [...tracks].sort((a, b) => {
+    const ad = a.discNo != null ? Number(a.discNo) : 0;
+    const bd = b.discNo != null ? Number(b.discNo) : 0;
+    if (ad !== bd) return ad - bd;
+
+    const an = a.trackNo != null ? Number(a.trackNo) : 0;
+    const bn = b.trackNo != null ? Number(b.trackNo) : 0;
+    if (an !== bn) return an - bn;
+
+    return String(a.title || "").localeCompare(String(b.title || ""));
+  });
+}
+
 export default function NowPlayingScreen() {
-  const { trackId } = useParams<{ trackId: string }>();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { albumId, playlistId, trackId } = useParams<RouteParams>();
 
   const [track, setTrack] = useState<TrackDto | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,6 +74,10 @@ export default function NowPlayingScreen() {
 
   const [isAddToPlaylistOpen, setIsAddToPlaylistOpen] = useState(false);
 
+  // Track list for prev/next navigation
+  const [contextTracks, setContextTracks] = useState<TrackDto[]>([]);
+  const [contextLoading, setContextLoading] = useState(false);
+
   const bgStyle: React.CSSProperties = {
     backgroundImage: `
       radial-gradient(900px 600px at 18% 20%, rgba(255, 110, 90, 0.45), transparent 60%),
@@ -67,6 +97,88 @@ export default function NowPlayingScreen() {
     const t = window.setTimeout(() => setToast(null), 3200);
     return () => window.clearTimeout(t);
   }, [toast]);
+
+  // Identify which route family we're in
+  const routeKind = useMemo<"album" | "playlist" | "favourites" | "unknown">(() => {
+    const p = location.pathname;
+    if (p.startsWith("/albums/")) return "album";
+    if (p.startsWith("/playlists/")) return "playlist";
+    if (p.startsWith("/favourites/")) return "favourites";
+    return "unknown";
+  }, [location.pathname]);
+
+  // Back button behavior: go to album/playlist/favourites listing
+  const onBack = useCallback(() => {
+    if (routeKind === "album" && albumId) {
+      navigate(`/album/${albumId}`);
+      return;
+    }
+    if (routeKind === "playlist" && playlistId) {
+      navigate(`/playlists/${playlistId}`);
+      return;
+    }
+    if (routeKind === "favourites") {
+      navigate("/favourites");
+      return;
+    }
+    navigate(-1);
+  }, [routeKind, albumId, playlistId, navigate]);
+
+  // Load context tracks (for prev/next)
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadContext = async () => {
+      setContextLoading(true);
+      try {
+        if (routeKind === "album") {
+          if (!albumId) throw new Error("albumId missing in URL.");
+          const dto: any = await albumsService.getById(albumId, { withTracks: true });
+          const tracks: TrackDto[] = Array.isArray(dto?.tracks) ? dto.tracks : [];
+          if (!cancelled) setContextTracks(sortAlbumLike(tracks));
+          return;
+        }
+
+        if (routeKind === "playlist") {
+          if (!playlistId) throw new Error("playlistId missing in URL.");
+          const dto: any = await playlistsService.getById(playlistId, { withTracks: true });
+          const tracks: TrackDto[] = Array.isArray(dto?.tracks) ? dto.tracks : [];
+          if (!cancelled) setContextTracks(tracks);
+          return;
+        }
+
+        if (routeKind === "favourites") {
+          const rows: any = await (tracksService as any).listFavourites?.();
+          const tracks: TrackDto[] = Array.isArray(rows)
+            ? rows
+            : Array.isArray(rows?.tracks)
+            ? rows.tracks
+            : [];
+          if (!cancelled) setContextTracks(sortAlbumLike(tracks));
+          return;
+        }
+
+        if (!cancelled) setContextTracks([]);
+      } catch (e: any) {
+        if (cancelled) return;
+        setContextTracks([]);
+        setToast({
+          kind: "err",
+          message:
+            e?.response?.data?.error ??
+            e?.message ??
+            "Failed to load track list for previous/next navigation.",
+        });
+      } finally {
+        if (!cancelled) setContextLoading(false);
+      }
+    };
+
+    void loadContext();
+    return () => {
+      cancelled = true;
+    };
+  }, [routeKind, albumId, playlistId]);
 
   // Load track details from backend
   useEffect(() => {
@@ -113,6 +225,7 @@ export default function NowPlayingScreen() {
         await tracksService.play(trackId, { positionSec: 0 });
         if (cancelled) return;
         setIsPlaying(true);
+        setPositionSec(0);
       } catch (e: any) {
         if (cancelled) return;
         setToast({
@@ -128,33 +241,65 @@ export default function NowPlayingScreen() {
     };
   }, [trackId]);
 
-  // ✅ Keep localStorage "nowPlaying" in sync (for sidebar strip etc.)
+  // ✅ Keep localStorage "nowPlaying" in sync (for sidebar strip + album highlight)
   useEffect(() => {
     if (!track) return;
 
     const albumCoverPath = track.album?.coverArtPath ? String(track.album.coverArtPath) : "";
     const artworkUrl = albumCoverPath ? toBackendUrl(albumCoverPath) : "";
 
-    const title = String(track.title || "Unknown Track");
-    const artist = String(track.trackArtist || "Unknown Artist");
-    const album = String(track.album?.title || "Unknown Album");
+    const tTitle = String(track.title || "Unknown Track");
+    const tArtist = String(track.trackArtist || "Unknown Artist");
+    const tAlbumTitle = String(track.album?.title || "Unknown Album");
 
     const durationSec = Number(track.durationSec || 0) || 0;
+
+    // ✅ IDs (what we need for AlbumScreen highlight)
+    const resolvedTrackId = String((track as any)?.id ?? trackId ?? "");
+    const resolvedAlbumId =
+      routeKind === "album"
+        ? String(albumId ?? "")
+        : track.album?.id != null
+        ? String((track.album as any).id)
+        : "";
 
     try {
       localStorage.setItem(
         "nowPlaying",
         JSON.stringify({
-          artwork: { url: artworkUrl, alt: `${title} artwork` },
-          track: { title, artist, album, isExplicit: !!(track as any)?.isExplicit },
+          artwork: { url: artworkUrl, alt: `${tTitle} artwork` },
+
+          // ✅ store ids inside track + album
+          track: {
+            id: resolvedTrackId,
+            title: tTitle,
+            artist: tArtist,
+            album: tAlbumTitle,
+            isExplicit: !!(track as any)?.isExplicit,
+          },
+
+          album: resolvedAlbumId
+            ? {
+                id: resolvedAlbumId,
+                title: tAlbumTitle,
+              }
+            : undefined,
+
+          // optional but useful for debugging / future features
+          context: {
+            kind: routeKind,
+            albumId: albumId ? String(albumId) : undefined,
+            playlistId: playlistId ? String(playlistId) : undefined,
+          },
+
           playback: { isPlaying, positionSec, durationSec, volume },
           deviceName: "Raspberry Pi",
-        } as NowPlayingData)
+        } as any as NowPlayingData)
       );
     } catch {
       // ignore storage errors
     }
-  }, [track, isPlaying, positionSec, volume]);
+  }, [track, trackId, routeKind, albumId, playlistId, isPlaying, positionSec, volume]);
 
   // Close volume popover on outside click / Escape
   useEffect(() => {
@@ -197,7 +342,7 @@ export default function NowPlayingScreen() {
     return () => document.removeEventListener("keydown", onKey);
   }, [isTrackListOpen]);
 
-  // Optional: make sidebar + tracklist mutually exclusive
+  // Make sidebar + tracklist mutually exclusive
   useEffect(() => {
     if (isSidebarOpen) setIsTrackListOpen(false);
   }, [isSidebarOpen]);
@@ -215,6 +360,98 @@ export default function NowPlayingScreen() {
 
   const durationSec = Number(track?.durationSec || 0) || 0;
 
+  const navigateToTrackInSameContext = useCallback(
+    (nextTrackId: string) => {
+      if (routeKind === "album") {
+        if (!albumId) {
+          setToast({ kind: "err", message: "albumId missing in URL." });
+          return;
+        }
+        navigate(`/albums/${albumId}/tracks/${nextTrackId}`);
+        return;
+      }
+      if (routeKind === "playlist") {
+        if (!playlistId) {
+          setToast({ kind: "err", message: "playlistId missing in URL." });
+          return;
+        }
+        navigate(`/playlists/${playlistId}/tracks/${nextTrackId}`);
+        return;
+      }
+      if (routeKind === "favourites") {
+        navigate(`/favourites/tracks/${nextTrackId}`);
+        return;
+      }
+
+      setToast({ kind: "err", message: "Unknown route context for next/previous navigation." });
+    },
+    [navigate, routeKind, albumId, playlistId]
+  );
+
+  const goPrev = useCallback(() => {
+    if (!trackId) return;
+
+    if (!contextTracks.length) {
+      setToast({
+        kind: "warn",
+        message: contextLoading ? "Loading track list…" : "No track list available for previous/next.",
+      });
+      return;
+    }
+
+    const idx = contextTracks.findIndex((t: any) => String((t as any).id) === String(trackId));
+    if (idx < 0) {
+      setToast({ kind: "warn", message: "Current track not found in list." });
+      return;
+    }
+
+    let targetIdx = idx - 1;
+
+    if (targetIdx < 0) {
+      if (repeatMode === "all") targetIdx = contextTracks.length - 1;
+      else {
+        setToast({ kind: "warn", message: "This is the first track." });
+        return;
+      }
+    }
+
+    const nextId = String((contextTracks[targetIdx] as any).id);
+    if (!nextId) return;
+    navigateToTrackInSameContext(nextId);
+  }, [trackId, contextTracks, contextLoading, repeatMode, navigateToTrackInSameContext]);
+
+  const goNext = useCallback(() => {
+    if (!trackId) return;
+
+    if (!contextTracks.length) {
+      setToast({
+        kind: "warn",
+        message: contextLoading ? "Loading track list…" : "No track list available for previous/next.",
+      });
+      return;
+    }
+
+    const idx = contextTracks.findIndex((t: any) => String((t as any).id) === String(trackId));
+    if (idx < 0) {
+      setToast({ kind: "warn", message: "Current track not found in list." });
+      return;
+    }
+
+    let targetIdx = idx + 1;
+
+    if (targetIdx >= contextTracks.length) {
+      if (repeatMode === "all") targetIdx = 0;
+      else {
+        setToast({ kind: "warn", message: "This is the last track." });
+        return;
+      }
+    }
+
+    const nextId = String((contextTracks[targetIdx] as any).id);
+    if (!nextId) return;
+    navigateToTrackInSameContext(nextId);
+  }, [trackId, contextTracks, contextLoading, repeatMode, navigateToTrackInSameContext]);
+
   return (
     <div className="min-h-screen w-full" style={bgStyle}>
       <div className="min-h-screen w-full backdrop-blur-2xl">
@@ -224,6 +461,7 @@ export default function NowPlayingScreen() {
             isVolumeOpen={isVolumeOpen}
             onToggleVolume={() => setIsVolumeOpen((v) => !v)}
             onOpenSidebar={() => setIsSidebarOpen(true)}
+            onBack={onBack}
             isTrackListOpen={isTrackListOpen}
             onToggleTrackList={() => setIsTrackListOpen((v) => !v)}
           >
@@ -233,7 +471,10 @@ export default function NowPlayingScreen() {
           </NowPlayingHeader>
 
           <NowPlayingCard>
-            <Artwork src={artworkUrl || "/placeholder.png"} alt={artworkUrl ? `${title} artwork` : "Artwork"} />
+            <Artwork
+              src={artworkUrl || "/placeholder.png"}
+              alt={artworkUrl ? `${title} artwork` : "Artwork"}
+            />
 
             <div className="mt-4">
               <div className="flex items-start justify-between gap-3">
@@ -244,7 +485,6 @@ export default function NowPlayingScreen() {
                   isExplicit={!!(track as any)?.isExplicit}
                 />
 
-                {/* Right side controls: + (add to playlist) + shuffle/repeat */}
                 <div className="flex shrink-0 items-center gap-2">
                   <button
                     type="button"
@@ -268,7 +508,13 @@ export default function NowPlayingScreen() {
             </div>
 
             <SeekBar positionSec={positionSec} durationSec={durationSec} onSeek={setPositionSec} />
-            <PlaybackControls isPlaying={isPlaying} setIsPlaying={setIsPlaying} />
+
+            <PlaybackControls
+              isPlaying={isPlaying}
+              setIsPlaying={setIsPlaying}
+              onPrev={goPrev}
+              onNext={goNext}
+            />
 
             {toast ? (
               <div className="mt-3">
@@ -295,7 +541,6 @@ export default function NowPlayingScreen() {
           />
         ) : null}
 
-        {/* Add to playlist modal */}
         {trackId ? (
           <AddToPlaylistModal
             open={isAddToPlaylistOpen}

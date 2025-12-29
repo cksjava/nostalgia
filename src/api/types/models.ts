@@ -84,3 +84,14 @@ export type ScanReport = {
   removedTracks: number;
   errors: Array<{ file: string; error: string }>;
 };
+
+export type AlbumTrack = {
+  no: number;
+  title: string;
+  durationSec?: number;
+};
+
+export type FavouriteTrack = AlbumTrack & {
+  artist: string;
+  album?: string;
+};

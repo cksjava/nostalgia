@@ -279,7 +279,7 @@ export default function AlbumsScreen(props: { nowPlaying?: NowPlayingData }) {
                         key={album.id}
                         album={album}
                         onClick={() =>
-                          navigate("/album", {
+                          navigate(`/album/${album.id}`, {
                             state: { album, nowPlaying },
                           })
                         }

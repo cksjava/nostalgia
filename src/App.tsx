@@ -15,8 +15,10 @@ function App() {
       <Routes>
         <Route path="/" element={<AlbumsScreen />} />
         <Route path="/albums" element={<AlbumsScreen />} />
-        <Route path="/now-playing/:trackId" element={<NowPlayingScreen />} />
-        <Route path="/album" element={<AlbumScreen />} />
+        <Route path="/albums/:albumId/tracks/:trackId" element={<NowPlayingScreen />} />
+        <Route path="/playlists/:playlistId/tracks/:trackId" element={<NowPlayingScreen />} />
+        <Route path="/favourites/tracks/:trackId" element={<NowPlayingScreen />} />
+        <Route path="/album/:albumId" element={<AlbumScreen />} />
         <Route path="/cd" element={<CdAudioScreen />} />
         <Route path="/playlists" element={<PlaylistsScreen />} />
         <Route path="/playlists/:id" element={<PlaylistDetailsScreen />} />

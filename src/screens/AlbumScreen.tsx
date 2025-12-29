@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import type { NowPlayingData } from "../types/nowPlaying";
 import { AlbumHeader } from "../components/album/AlbumHeader";
@@ -11,30 +11,18 @@ import type { Album as AlbumDto, Track as TrackDto } from "../api/types/models";
 import { toBackendUrl } from "../api/utils/url";
 
 import { AddToPlaylistModal } from "../components/playlists/AddToPlaylistModal";
-
-// From AlbumsScreen we navigate with state: { album, nowPlaying }
-// album is AlbumUI (defined in AlbumsScreen). We avoid importing from screen to prevent circular deps.
-type AlbumUI = {
-  id: string;
-  title: string;
-  artists: string[];
-  year?: number;
-  trackCount?: number;
-  artworkUrl: string;
-  raw?: AlbumDto;
-};
+import { SidebarDrawer } from "../components/common/SidebarDrawer";
 
 type LocationState = {
-  album?: AlbumUI;
   nowPlaying?: NowPlayingData;
 };
 
 type TrackRowUI = {
-  no: number; // used by your AlbumTrackRow key and handlers
+  no: number;
   title: string;
   duration?: string;
   isFavourite?: boolean;
-  trackId?: string; // useful for backend actions
+  trackId?: string;
 };
 
 function safeJsonArray(raw: string | null | undefined): string[] {
@@ -56,22 +44,40 @@ function formatDuration(sec: number | null | undefined): string | undefined {
   return `${mm}:${String(ss).padStart(2, "0")}`;
 }
 
-function normalizeTrackNo(t: TrackDto, idx: number): number {
-  const n = t.trackNo != null ? Number(t.trackNo) : NaN;
-  if (Number.isFinite(n) && n > 0) return n;
-  return idx + 1;
-}
+function buildAlbumArtistLineFromDto(albumDto: AlbumDto | null): string {
+  if (!albumDto) return "—";
 
-function buildAlbumArtistLineFromDto(albumDto: AlbumDto | null, fallback: string[]): string {
-  if (!albumDto) return fallback.join(", ");
-
-  const arr = safeJsonArray(albumDto.albumArtists);
+  const arr = safeJsonArray((albumDto as any).albumArtists);
   if (arr.length) return arr.join(", ");
 
-  const single = albumDto.albumArtist ? String(albumDto.albumArtist).trim() : "";
+  const single = (albumDto as any).albumArtist ? String((albumDto as any).albumArtist).trim() : "";
   if (single) return single;
 
-  return fallback.join(", ");
+  return "—";
+}
+
+// ✅ Try to read trackId + albumId from localStorage nowPlaying
+function readNowPlayingFromStorage(): { trackId?: string; albumId?: string } {
+  try {
+    const raw = localStorage.getItem("nowPlaying");
+    if (!raw) return {};
+    const np = JSON.parse(raw) as any;
+
+    // recommended if you store these (ideal)
+    const storedTrackId = np?.track?.id ? String(np.track.id) : undefined;
+    const storedAlbumId = np?.album?.id ? String(np.album.id) : undefined;
+
+    // fallback: some implementations put these at top-level
+    const fallbackTrackId = np?.trackId ? String(np.trackId) : undefined;
+    const fallbackAlbumId = np?.albumId ? String(np.albumId) : undefined;
+
+    return {
+      trackId: storedTrackId ?? fallbackTrackId,
+      albumId: storedAlbumId ?? fallbackAlbumId,
+    };
+  } catch {
+    return {};
+  }
 }
 
 export default function AlbumScreen() {
@@ -79,17 +85,10 @@ export default function AlbumScreen() {
   const location = useLocation();
   const state = (location.state ?? {}) as LocationState;
 
-  const initialAlbum = state.album;
-  const nowPlaying = state.nowPlaying;
+  // ✅ Route: /album/:albumId
+  const { albumId } = useParams<{ albumId: string }>();
 
-  // If user refreshed directly on this page, state may be missing
-  useEffect(() => {
-    if (!initialAlbum) navigate("/albums");
-  }, [initialAlbum, navigate]);
-
-  const [activeTrackNo, setActiveTrackNo] = useState<number | undefined>(
-    nowPlaying?.album?.currentTrackNo
-  );
+  const nowPlayingFromState = state.nowPlaying;
 
   const [albumDto, setAlbumDto] = useState<(AlbumDto & { tracks?: TrackDto[] }) | null>(null);
   const [tracks, setTracks] = useState<TrackRowUI[]>([]);
@@ -105,6 +104,22 @@ export default function AlbumScreen() {
   const [addTrackId, setAddTrackId] = useState<string | null>(null);
   const [addTrackTitle, setAddTrackTitle] = useState<string | undefined>(undefined);
 
+  // ✅ Sidebar
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // ✅ Active highlight should be by trackId (not number)
+  const [activeTrackId, setActiveTrackId] = useState<string | undefined>(() => {
+    // Prefer state if present (rare), else localStorage
+    const stTrackId = (nowPlayingFromState as any)?.track?.id
+      ? String((nowPlayingFromState as any).track.id)
+      : undefined;
+
+    if (stTrackId) return stTrackId;
+
+    const ls = readNowPlayingFromStorage();
+    return ls.trackId;
+  });
+
   // Auto-hide toast
   useEffect(() => {
     if (!toast) return;
@@ -112,15 +127,22 @@ export default function AlbumScreen() {
     return () => window.clearTimeout(t);
   }, [toast]);
 
-  const albumId = initialAlbum?.id;
-
+  // ✅ Fetch album+tracks based on URL param
   useEffect(() => {
-    if (!albumId) return;
+    if (!albumId) {
+      setToast({ kind: "err", message: "Album id missing in URL." });
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
 
     const load = async () => {
       setLoading(true);
       try {
         const dto = (await albumsService.getById(albumId, { withTracks: true })) as any;
+        if (cancelled) return;
+
         setAlbumDto(dto);
 
         const dtoTracks: TrackDto[] = Array.isArray(dto?.tracks) ? dto.tracks : [];
@@ -139,28 +161,59 @@ export default function AlbumScreen() {
         });
 
         const mapped: TrackRowUI[] = dtoTracks.map((t, idx) => ({
-          no: normalizeTrackNo(t, idx),
+          no: idx + 1, // ✅ always 1..N in UI
           title: String(t.title || `Track ${idx + 1}`),
           duration: formatDuration(t.durationSec),
           isFavourite: !!(t as any).isFavourite,
-          trackId: (t as any).id,
+          trackId: String((t as any).id ?? ""),
         }));
 
         setTracks(mapped);
+
+        // ✅ Determine active highlight correctly:
+        // - If nowPlaying in storage belongs to THIS album and track exists in list -> highlight it
+        // - Else: no highlight (don’t force first track)
+        const ls = readNowPlayingFromStorage();
+        const lsBelongsToThisAlbum = ls.albumId && String(ls.albumId) === String(albumId);
+        const existsInThisAlbum = ls.trackId && mapped.some((x) => String(x.trackId) === String(ls.trackId));
+
+        if (lsBelongsToThisAlbum && existsInThisAlbum) {
+          setActiveTrackId(String(ls.trackId));
+        } else {
+          // If you prefer: keep whatever was active earlier (e.g. user clicked),
+          // but don't auto-highlight first row.
+          setActiveTrackId((prev) => (prev && mapped.some((x) => x.trackId === prev) ? prev : undefined));
+        }
       } catch (e: any) {
+        if (cancelled) return;
         setToast({
           kind: "err",
           message: e?.response?.data?.error ?? e?.message ?? "Failed to load album.",
         });
+        setAlbumDto(null);
+        setTracks([]);
+        setActiveTrackId(undefined);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     void load();
+    return () => {
+      cancelled = true;
+    };
   }, [albumId]);
 
-  // Same background style as Now Playing
+  // Close sidebar on Escape
+  useEffect(() => {
+    if (!isSidebarOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsSidebarOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [isSidebarOpen]);
+
   const bgStyle: React.CSSProperties = {
     backgroundImage: `
       radial-gradient(900px 600px at 18% 20%, rgba(255, 110, 90, 0.45), transparent 60%),
@@ -170,34 +223,40 @@ export default function AlbumScreen() {
     `,
   };
 
-  if (!initialAlbum) return null;
+  const albumTitle = String((albumDto as any)?.title ?? "—");
+  const albumYear = (albumDto as any)?.year ? Number((albumDto as any).year) : undefined;
 
-  const albumArtistLine = useMemo(
-    () => buildAlbumArtistLineFromDto(albumDto, initialAlbum.artists),
-    [albumDto, initialAlbum.artists]
-  );
+  const albumArtistLine = useMemo(() => buildAlbumArtistLineFromDto(albumDto), [albumDto]);
 
-  const albumTitle = albumDto?.title ?? initialAlbum.title;
-  const albumYear = albumDto?.year ?? initialAlbum.year;
-  const albumCoverRaw = (albumDto?.coverArtPath as string | null) || initialAlbum.artworkUrl;
+  const albumCoverRaw =
+    ((albumDto as any)?.coverArtPath as string | null) ||
+    ((albumDto as any)?.artworkUrl as string | null) ||
+    "";
 
-  const albumCover = albumCoverRaw ? toBackendUrl(albumCoverRaw) : albumCoverRaw;
+  const albumCover = albumCoverRaw ? toBackendUrl(albumCoverRaw) : "";
 
-  const computedTrackCount = tracks.length || initialAlbum.trackCount;
+  const computedTrackCount = tracks.length;
 
   const onPlayTrack = (trackNo: number) => {
-    setActiveTrackNo(trackNo);
-
     const tr = tracks.find((x) => x.no === trackNo);
     if (!tr?.trackId) {
       setToast({ kind: "err", message: "Track ID not available." });
       return;
     }
 
-    navigate(`/now-playing/${tr.trackId}`, {
+    if (!albumId) {
+      setToast({ kind: "err", message: "Album ID not available." });
+      return;
+    }
+
+    // ✅ update highlight immediately
+    setActiveTrackId(tr.trackId);
+
+    // NowPlaying album route: /albums/:albumId/tracks/:trackId (plural)
+    navigate(`/albums/${albumId}/tracks/${tr.trackId}`, {
       state: {
-        nowPlaying,
-        fromAlbumId: initialAlbum.id,
+        nowPlaying: nowPlayingFromState,
+        fromAlbumId: albumId,
         fromTrackNo: trackNo,
       },
     });
@@ -211,7 +270,9 @@ export default function AlbumScreen() {
     }
 
     const nextIsFav = !tr.isFavourite;
-    setTracks((prev) => prev.map((x) => (x.no === trackNo ? { ...x, isFavourite: nextIsFav } : x)));
+    setTracks((prev) =>
+      prev.map((x) => (x.no === trackNo ? { ...x, isFavourite: nextIsFav } : x))
+    );
 
     try {
       await tracksService.setFavourite(tr.trackId, nextIsFav);
@@ -220,7 +281,9 @@ export default function AlbumScreen() {
         message: nextIsFav ? "Added to favourites." : "Removed from favourites.",
       });
     } catch (e: any) {
-      setTracks((prev) => prev.map((x) => (x.no === trackNo ? { ...x, isFavourite: !nextIsFav } : x)));
+      setTracks((prev) =>
+        prev.map((x) => (x.no === trackNo ? { ...x, isFavourite: !nextIsFav } : x))
+      );
       setToast({
         kind: "err",
         message: e?.response?.data?.error ?? e?.message ?? "Failed to update favourite.",
@@ -228,7 +291,6 @@ export default function AlbumScreen() {
     }
   };
 
-  // ✅ Open add-to-playlist for a specific track
   const onAddToPlaylist = (trackNo: number) => {
     const tr = tracks.find((x) => x.no === trackNo);
     if (!tr?.trackId) {
@@ -250,7 +312,11 @@ export default function AlbumScreen() {
   return (
     <div className="min-h-screen w-full" style={bgStyle}>
       <div className="min-h-screen w-full backdrop-blur-2xl">
-        <AlbumHeader title={albumTitle} onBack={() => navigate(-1)} />
+        <AlbumHeader
+          title={albumTitle}
+          onOpenSidebar={() => setIsSidebarOpen(true)}
+          onBack={() => navigate("/albums")}
+        />
 
         <main className="mx-auto w-full max-w-md px-4 pb-10 pt-4">
           <section className="rounded-[1.75rem] border border-white/10 bg-black/25 shadow-2xl shadow-black/40 backdrop-blur-2xl">
@@ -259,8 +325,8 @@ export default function AlbumScreen() {
               <div className="flex items-center gap-4">
                 <div className="h-24 w-24 overflow-hidden rounded-2xl border border-white/10 bg-white/5">
                   <img
-                    src={albumCover}
-                    alt={`${albumTitle} cover`}
+                    src={albumCover || "/placeholder.png"}
+                    alt={albumCover ? `${albumTitle} cover` : "Album cover"}
                     className="h-full w-full object-cover"
                     loading="lazy"
                   />
@@ -295,10 +361,10 @@ export default function AlbumScreen() {
                   <div className="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-white/10 bg-white/5">
                     {tracks.map((t, idx) => (
                       <AlbumTrackRow
-                        key={t.no}
+                        key={t.trackId || `${albumId}:${idx}`}
                         track={t as any}
                         artistLine={albumArtistLine}
-                        active={activeTrackNo === t.no}
+                        active={!!t.trackId && !!activeTrackId && String(t.trackId) === String(activeTrackId)}
                         showDivider={idx !== tracks.length - 1}
                         onPlay={onPlayTrack}
                         onAddToPlaylist={onAddToPlaylist}
@@ -320,7 +386,8 @@ export default function AlbumScreen() {
           </section>
         </main>
 
-        {/* ✅ Add to playlist modal */}
+        <SidebarDrawer open={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
+
         {addTrackId ? (
           <AddToPlaylistModal
             open={isAddToPlaylistOpen}

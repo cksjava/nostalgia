@@ -10,14 +10,23 @@ import {
 export function PlaybackControls(props: {
   isPlaying: boolean;
   setIsPlaying: React.Dispatch<React.SetStateAction<boolean>>;
+  onPrev?: () => void;
+  onNext?: () => void;
+  disablePrev?: boolean;
+  disableNext?: boolean;
 }) {
-  const { isPlaying, setIsPlaying } = props;
+  const { isPlaying, setIsPlaying, onPrev, onNext, disablePrev, disableNext } = props;
 
   return (
     <div className="mt-6 flex items-center justify-center gap-6">
       <button
         type="button"
-        className="rounded-full bg-white/10 p-4 text-white/80 hover:bg-white/15 hover:text-white"
+        onClick={onPrev}
+        disabled={!onPrev || disablePrev}
+        className={[
+          "rounded-full bg-white/10 p-4 text-white/80 hover:bg-white/15 hover:text-white",
+          (!onPrev || disablePrev) ? "opacity-40 cursor-not-allowed hover:bg-white/10 hover:text-white/80" : "",
+        ].join(" ")}
         aria-label="Previous"
         title="Previous"
       >
@@ -36,7 +45,12 @@ export function PlaybackControls(props: {
 
       <button
         type="button"
-        className="rounded-full bg-white/10 p-4 text-white/80 hover:bg-white/15 hover:text-white"
+        onClick={onNext}
+        disabled={!onNext || disableNext}
+        className={[
+          "rounded-full bg-white/10 p-4 text-white/80 hover:bg-white/15 hover:text-white",
+          (!onNext || disableNext) ? "opacity-40 cursor-not-allowed hover:bg-white/10 hover:text-white/80" : "",
+        ].join(" ")}
         aria-label="Next"
         title="Next"
       >

@@ -1,12 +1,12 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { cdTracks } from "../data/cdTracks";
+// import { cdTracks } from "../data/cdTracks";
 import { SidebarDrawer } from "../components/common/SidebarDrawer";
 
 import { CdHeader } from "../components/cd/CdHeader";
 import { CdControls } from "../components/cd/CdControls";
-import { CdTrackRow } from "../components/cd/CdTrackRow";
+// import { CdTrackRow } from "../components/cd/CdTrackRow";
 
 export default function CdAudioScreen() {
   const navigate = useNavigate();
@@ -52,7 +52,7 @@ export default function CdAudioScreen() {
                 <div className="min-w-0">
                   <p className="text-lg font-semibold text-white">Audio CD</p>
                   <p className="text-sm text-white/60">
-                    {cdTracks.length} tracks
+                    {/* {cdTracks.length} tracks */}
                   </p>
                 </div>
               </div>
@@ -66,14 +66,14 @@ export default function CdAudioScreen() {
 
               {/* Track list */}
               <div className="mt-3 overflow-hidden rounded-xl border border-white/10 bg-white/5">
-                {cdTracks.map((t, idx) => (
+                {/* {cdTracks.map((t, idx) => (
                   <CdTrackRow
                     key={t.no}
                     track={t}
                     showDivider={idx !== cdTracks.length - 1}
                     onPlay={(trackNo) => startPlayback(trackNo, false)}
                   />
-                ))}
+                ))} */}
               </div>
             </div>
           </section>

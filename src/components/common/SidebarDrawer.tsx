@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -30,9 +30,20 @@ type StoredNowPlaying = {
   track?: { title?: string; artist?: string };
 };
 
+function readNowPlaying(): StoredNowPlaying {
+  try {
+    const raw = localStorage.getItem("nowPlaying");
+    return raw ? (JSON.parse(raw) as StoredNowPlaying) : {};
+  } catch {
+    return {};
+  }
+}
+
 export function SidebarDrawer(props: { open: boolean; onClose: () => void }) {
   const { open, onClose } = props;
   const navigate = useNavigate();
+
+  const [nowPlaying, setNowPlaying] = useState<StoredNowPlaying>({});
 
   // Prevent background scroll when open
   useEffect(() => {
@@ -44,15 +55,23 @@ export function SidebarDrawer(props: { open: boolean; onClose: () => void }) {
     };
   }, [open]);
 
-  // Read now playing from localStorage
-  const nowPlaying = useMemo<StoredNowPlaying>(() => {
-    try {
-      const raw = localStorage.getItem("nowPlaying");
-      return raw ? JSON.parse(raw) : {};
-    } catch {
-      return {};
-    }
-  }, []);
+  // ✅ Refresh nowPlaying every time drawer opens
+  useEffect(() => {
+    if (!open) return;
+    setNowPlaying(readNowPlaying());
+  }, [open]);
+
+  // ✅ Also update while open if another tab/window updates localStorage
+  useEffect(() => {
+    if (!open) return;
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "nowPlaying") setNowPlaying(readNowPlaying());
+    };
+
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [open]);
 
   const artworkUrl =
     nowPlaying.artwork?.url ?? "https://placehold.co/200x200/png?text=No+Audio";
@@ -96,7 +115,6 @@ export function SidebarDrawer(props: { open: boolean; onClose: () => void }) {
           {/* Top area */}
           <div className="p-4">
             <div className="flex items-start justify-between gap-3">
-              {/* CHANGED: make row layout properly constrain text */}
               <div className="flex min-w-0 flex-1 items-center gap-3">
                 <div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/5">
                   <img
@@ -107,16 +125,11 @@ export function SidebarDrawer(props: { open: boolean; onClose: () => void }) {
                   />
                 </div>
 
-                {/* CHANGED: flex-1 + min-w-0 ensures truncation actually works */}
                 <div className="min-w-0 flex-1">
                   <p className="text-xs tracking-widest text-white/60">NOW PLAYING</p>
-
-                  {/* CHANGED: explicit block + w-full + truncate */}
                   <p className="block w-full truncate text-base font-semibold text-white">
                     {title}
                   </p>
-
-                  {/* CHANGED: explicit block + w-full + truncate */}
                   <p className="block w-full truncate text-sm text-white/70">
                     {subtitle}
                   </p>

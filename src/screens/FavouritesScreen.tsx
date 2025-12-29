@@ -150,7 +150,7 @@ export default function FavouritesScreen() {
     `,
   };
 
-  const startPlayback = (trackNo?: number, shuffle = false) => {
+  const startPlayback = (trackNo?: string, shuffle = false) => {
     navigate("/", {
       state: { fromSource: "favourites", trackNo, shuffle },
     });
@@ -239,7 +239,7 @@ export default function FavouritesScreen() {
                 <div className="mt-3 flex gap-3">
                   <button
                     type="button"
-                    onClick={() => startPlayback(1, false)}
+                    onClick={() => startPlayback("1", false)}
                     disabled={tracks.length === 0}
                     className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/15 disabled:opacity-60"
                   >
@@ -289,7 +289,7 @@ export default function FavouritesScreen() {
                           key={t.trackId}
                           track={t as any}
                           showDivider={idx !== filtered.length - 1}
-                          onPlay={(trackNo: number) => startPlayback(trackNo, false)}
+                          onPlay={(trackNo: string) => startPlayback(trackNo, false)}
                         />
                       ))
                     )}

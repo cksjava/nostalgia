@@ -7,6 +7,7 @@ import {
   faVolumeHigh,
   faVolumeLow,
   faVolumeXmark,
+  faArrowLeft,
 } from "@fortawesome/free-solid-svg-icons";
 
 export function NowPlayingHeader(props: {
@@ -14,6 +15,9 @@ export function NowPlayingHeader(props: {
   isVolumeOpen: boolean;
   onToggleVolume: () => void;
   onOpenSidebar: () => void;
+
+  // ✅ new
+  onBack?: () => void;
 
   isTrackListOpen: boolean;
   onToggleTrackList: () => void;
@@ -25,6 +29,7 @@ export function NowPlayingHeader(props: {
     isVolumeOpen,
     onToggleVolume,
     onOpenSidebar,
+    onBack,
     isTrackListOpen,
     onToggleTrackList,
     children,
@@ -35,16 +40,31 @@ export function NowPlayingHeader(props: {
 
   return (
     <div className="mb-5 flex items-center justify-between">
-      {/* Left: hamburger */}
-      <button
-        type="button"
-        onClick={onOpenSidebar}
-        className="rounded-full p-2 text-white/70 hover:bg-white/10 hover:text-white"
-        aria-label="Open menu"
-        title="Menu"
-      >
-        <FontAwesomeIcon icon={faBars} />
-      </button>
+      {/* Left: back + hamburger */}
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={onOpenSidebar}
+          className="rounded-full p-2 text-white/70 hover:bg-white/10 hover:text-white"
+          aria-label="Open menu"
+          title="Menu"
+        >
+          <FontAwesomeIcon icon={faBars} />
+        </button>
+        <button
+          type="button"
+          onClick={onBack}
+          disabled={!onBack}
+          className={[
+            "rounded-full p-2 hover:bg-white/10 hover:text-white",
+            onBack ? "text-white/70" : "text-white/30 cursor-not-allowed",
+          ].join(" ")}
+          aria-label="Back"
+          title="Back"
+        >
+          <FontAwesomeIcon icon={faArrowLeft} />
+        </button>
+      </div>
 
       {/* Right controls */}
       <div className="relative flex items-center gap-1">
