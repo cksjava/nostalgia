@@ -209,11 +209,12 @@ export default function PlaylistsScreen() {
   };
 
   return (
-    <div className="min-h-screen w-full" style={bgStyle}>
-      <div className="min-h-screen w-full backdrop-blur-2xl">
-        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col">
+    <div className="h-screen w-full" style={bgStyle}>
+      <div className="h-screen w-full backdrop-blur-2xl">
+        {/* ✅ constrain whole page height + allow internal flex children to shrink */}
+        <div className="mx-auto flex h-screen w-full max-w-md flex-col min-h-0">
           {/* Top bar */}
-          <header className="px-4 pt-6">
+          <header className="shrink-0 px-4 pt-6">
             <div className="flex items-center justify-between">
               <button
                 type="button"
@@ -242,10 +243,11 @@ export default function PlaylistsScreen() {
             </div>
           </header>
 
-          <main className="flex-1 px-4 pb-10 pt-4">
-            <section className="flex h-full flex-col rounded-[1.75rem] border border-white/10 bg-black/25 shadow-2xl shadow-black/40 backdrop-blur-2xl">
-              {/* Top portion */}
-              <div className="p-4">
+          {/* ✅ min-h-0 is essential so the scroll area can shrink */}
+          <main className="flex-1 px-4 pb-10 pt-4 min-h-0">
+            <section className="flex h-full flex-col rounded-[1.75rem] border border-white/10 bg-black/25 shadow-2xl shadow-black/40 backdrop-blur-2xl min-h-0">
+              {/* Top portion (fixed) */}
+              <div className="shrink-0 p-4">
                 <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
                   <FontAwesomeIcon icon={faMagnifyingGlass} className="text-white/45" />
                   <input
@@ -259,9 +261,10 @@ export default function PlaylistsScreen() {
                 <div className="mt-4 h-px w-full bg-white/10" />
               </div>
 
-              {/* Scrollable list only */}
-              <div className="flex-1 px-4 pb-4">
-                <div className="h-full overflow-y-auto rounded-xl border border-white/10 bg-white/5">
+              {/* ✅ scroll container must be in a min-h-0 flex child */}
+              <div className="flex min-h-0 flex-1 flex-col px-4 pb-4">
+                {/* ✅ ONLY this box scrolls */}
+                <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-white/10 bg-white/5">
                   {loading ? (
                     <div className="flex items-center justify-center gap-2 p-4 text-sm text-white/60">
                       <FontAwesomeIcon icon={faCircleNotch} spin className="text-white/60" />
@@ -282,9 +285,12 @@ export default function PlaylistsScreen() {
                   )}
                 </div>
 
+                {/* ✅ toast sits OUTSIDE the scroll box, so it doesn't change scroll height */}
                 {toast && (
-                  <div className="mt-3">
-                    <div className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm ${toastStyle}`}>
+                  <div className="mt-3 shrink-0">
+                    <div
+                      className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm ${toastStyle}`}
+                    >
                       <FontAwesomeIcon icon={toastIcon} className="mt-0.5 shrink-0" />
                       <span className="leading-snug">{toast.message}</span>
                     </div>
@@ -370,11 +376,15 @@ export default function PlaylistsScreen() {
           </div>
         )}
 
-        {/* ✅ Delete confirmation modal */}
+        {/* Delete confirmation modal */}
         <ConfirmModal
           open={!!deleteId}
           title="Delete playlist?"
-          message={deleteName ? `“${deleteName}” will be permanently deleted. This cannot be undone.` : "This cannot be undone."}
+          message={
+            deleteName
+              ? `“${deleteName}” will be permanently deleted. This cannot be undone.`
+              : "This cannot be undone."
+          }
           confirmText="Delete"
           cancelText="Cancel"
           danger

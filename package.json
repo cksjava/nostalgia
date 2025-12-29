@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy:backend": "bash scripts/build-and-copy-to-backend.sh"
   },
   "dependencies": {
     "@fortawesome/free-solid-svg-icons": "^7.1.0",

@@ -11,6 +11,7 @@ import {
   faTriangleExclamation,
   faCheck,
   faXmark,
+  faListUl,
 } from "@fortawesome/free-solid-svg-icons";
 
 import { playlistsService } from "../api/services/playlistsService";
@@ -25,6 +26,20 @@ type PlaylistDetails = PlaylistDto & { tracks?: TrackDto[] };
 function toStr(v: any, fallback = "—") {
   const s = String(v ?? "");
   return s.trim() ? s : fallback;
+}
+
+function toIso(v: any): string | null {
+  if (!v) return null;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function formatDateShort(iso: string | null | undefined) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
 }
 
 export default function PlaylistDetailsScreen() {
@@ -203,12 +218,15 @@ export default function PlaylistDetailsScreen() {
     `,
   };
 
-  const title = toStr((playlist as any)?.name, "Playlist");
+  const name = toStr((playlist as any)?.name, "Playlist");
+  const createdIso = toIso((playlist as any)?.createdAt);
+  const createdLabel = formatDateShort(createdIso);
+  const count = tracks.length;
 
   return (
     <div className="min-h-screen w-full" style={bgStyle}>
       <div className="min-h-screen w-full backdrop-blur-2xl">
-        {/* Layout container: prevent page scrolling */}
+        {/* Prevent page scrolling; only internal list scrolls */}
         <div className="mx-auto flex h-screen w-full max-w-md flex-col">
           {/* Fixed top header */}
           <header className="px-4 pt-6">
@@ -247,16 +265,31 @@ export default function PlaylistDetailsScreen() {
             </div>
           </header>
 
-          {/* Card: fixed title area + internal scroll list */}
           <main className="flex-1 px-4 pb-6 pt-4 min-h-0">
             <section className="flex h-full flex-col rounded-[1.75rem] border border-white/10 bg-black/25 shadow-2xl shadow-black/40 backdrop-blur-2xl">
-              {/* Neat playlist title area */}
+              {/* Enhanced playlist header card */}
               <div className="p-4">
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <div className="min-w-0">
-                    <div className="truncate text-lg font-semibold text-white">{title}</div>
-                    <div className="mt-1 text-sm text-white/60">
-                      {loading ? "Loading…" : `${tracks.length} track${tracks.length === 1 ? "" : "s"}`}
+                  <div className="flex items-start gap-3">
+                    <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-white/10 bg-white/5 text-white/75">
+                      <FontAwesomeIcon icon={faListUl} />
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-lg font-semibold text-white">{name}</div>
+
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-white/60">
+                        <span className="tabular-nums">
+                          {loading ? "Loading…" : `${count} track${count === 1 ? "" : "s"}`}
+                        </span>
+
+                        {createdLabel ? (
+                          <>
+                            <span className="text-white/35">•</span>
+                            <span className="text-white/55">Created {createdLabel}</span>
+                          </>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -299,7 +332,6 @@ export default function PlaylistDetailsScreen() {
                   )}
                 </div>
 
-                {/* Toast stays within page but below list */}
                 {toast && (
                   <div className="mt-3">
                     <div className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm ${toastStyle}`}>
