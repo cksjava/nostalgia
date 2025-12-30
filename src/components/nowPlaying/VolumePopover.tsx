@@ -3,15 +3,13 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faVolumeHigh, faVolumeLow, faVolumeXmark } from "@fortawesome/free-solid-svg-icons";
 import { clamp } from "../../utils/math";
 
-// ⬇️ update this import path/name to match your service file
 import { playerService } from "../../api/services/playerService";
+import { writeStoredVolume } from "../../utils/volumeStorage";
 
 export function VolumePopover(props: {
   refEl: React.RefObject<HTMLDivElement | null>;
   volume: number;
   setVolume: React.Dispatch<React.SetStateAction<number>>;
-
-  // optional: so NowPlayingScreen can show toast
   onToast?: (t: { kind: "ok" | "warn" | "err"; message: string }) => void;
 }) {
   const { refEl, volume, setVolume, onToast } = props;
@@ -30,6 +28,13 @@ export function VolumePopover(props: {
   useEffect(() => {
     latestValueRef.current = v;
   }, [v]);
+
+  // ✅ prevent a “first open” duplicate send
+  useEffect(() => {
+    lastSentRef.current = v;
+    // do not send here; just align tracking
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const clearTimer = () => {
     if (pendingTimerRef.current != null) {
@@ -51,13 +56,12 @@ export function VolumePopover(props: {
   };
 
   const scheduleSend = (next: number) => {
-    // if same as last sent, skip
     if (lastSentRef.current === next) return;
 
     clearTimer();
     pendingTimerRef.current = window.setTimeout(() => {
       void sendVolume(next);
-    }, 180); // tweak: 120-250ms usually feels good
+    }, 180);
   };
 
   const flushSend = () => {
@@ -67,7 +71,6 @@ export function VolumePopover(props: {
     void sendVolume(next);
   };
 
-  // cleanup
   useEffect(() => {
     return () => clearTimer();
   }, []);
@@ -91,8 +94,12 @@ export function VolumePopover(props: {
           value={v}
           onChange={(e) => {
             const next = clamp(Number(e.target.value), 0, 100);
-            setVolume(next);        // UI immediately
-            scheduleSend(next);     // backend debounced
+
+            // ✅ persist immediately so navigating/playing another track keeps it
+            writeStoredVolume(next);
+
+            setVolume(next);    // UI immediately
+            scheduleSend(next); // backend debounced
           }}
           onMouseUp={flushSend}
           onTouchEnd={flushSend}
