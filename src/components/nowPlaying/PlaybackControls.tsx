@@ -32,20 +32,14 @@ export function PlaybackControls(props: {
   const handleToggle = async () => {
     const next = !isPlaying;
 
-    // ✅ If going from paused -> playing: UI only (no backend call)
-    if (next === true) {
-      setIsPlaying(true);
-      return;
-    }
-
-    // ✅ If going from playing -> paused: optimistic + backend call
-    setIsPlaying(false);
+    // optimistic UI
+    setIsPlaying(next);
 
     try {
-      await onTogglePlay?.(false);
+      await onTogglePlay?.(next);
     } catch {
       // revert if backend failed
-      setIsPlaying(true);
+      setIsPlaying(!next);
     }
   };
 

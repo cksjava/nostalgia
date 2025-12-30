@@ -30,6 +30,7 @@ import { useNowPlayingLocalStorage } from "../hooks/nowPlaying/useNowPlayingLoca
 import { TrackActionsRow } from "../components/nowPlaying/TrackActionsRow";
 import { NowPlayingToast } from "../components/nowPlaying/NowPlayingToast";
 import { readStoredVolume, writeStoredVolume } from "../utils/volumeStorage";
+import { tracksService } from "../api/services/tracksService";
 
 type RouteParams = {
   albumId?: string;
@@ -229,11 +230,40 @@ export default function NowPlayingScreen() {
     writeStoredVolume(volume);
   }, [volume]);
 
-  // Pause/resume to backend
-  const onTogglePlay = useCallback(async (nextIsPlaying: boolean) => {
-    await playerService.pause(!nextIsPlaying);
-    lastTickMsRef.current = performance.now();
-  }, []);
+  // Pause/resume to backend (✅ real resume)
+  const onTogglePlay = useCallback(
+    async (nextIsPlaying: boolean) => {
+      if (!trackId) return;
+
+      if (nextIsPlaying === false) {
+        // playing -> paused
+        await playerService.pause(true);
+        return;
+      }
+
+      // paused -> playing (resume)
+      const resumed = await playerService.tryResume();
+
+      if (resumed) {
+        // keep tick baseline sane
+        lastTickMsRef.current = performance.now();
+        endedGuardRef.current = false;
+
+        // if backend gave us a position, sync local UI so seekbar doesn't jump
+        if (typeof resumed.positionSec === "number") {
+          setPositionSec(resumed.positionSec);
+        }
+        return;
+      }
+
+      // mpv has nothing loaded -> start track again at current UI position
+      // (this fixes the "play only works on screen load" dependency)
+      await tracksService.play(trackId, { positionSec });
+      lastTickMsRef.current = performance.now();
+      endedGuardRef.current = false;
+    },
+    [trackId, positionSec, setPositionSec]
+  );
 
   // localStorage nowPlaying sync
   useNowPlayingLocalStorage({
